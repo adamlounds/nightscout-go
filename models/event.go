@@ -2,14 +2,15 @@ package models
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 )
 
 var ErrNotFound = errors.New("models: no resource could be found")
+
+type EventRepository interface {
+	FetchEvent(ctx context.Context, id int) (*Event, error)
+}
 
 type Event struct {
 	ID        int       `json:"id"`
@@ -21,21 +22,9 @@ type Event struct {
 }
 
 type EventService struct {
-	DB *pgxpool.Pool
+	EventRepository
 }
 
 func (s *EventService) ByID(ctx context.Context, id int) (*Event, error) {
-	event := Event{
-		ID: id,
-	}
-
-	row := s.DB.QueryRow(ctx, "SELECT type, mgdl FROM events WHERE id = $1", id)
-	err := row.Scan(&event.Type, &event.Mgdl)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("eventSvc ByID: %w", err)
-	}
-	return &event, nil
+	return s.FetchEvent(ctx, id)
 }

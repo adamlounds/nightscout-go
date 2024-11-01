@@ -6,15 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
-	"github.com/jackc/pgx/v5/pgxpool"
+	pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
 )
 
 type PostgresEventRepository struct {
-	db *pgxpool.Pool
+	*pgstore.PostgresStore
 }
 
-func NewPostgresEventRepository(db *pgxpool.Pool) *PostgresEventRepository {
-	return &PostgresEventRepository{db: db}
+func NewPostgresEventRepository(pgstore *pgstore.PostgresStore) *PostgresEventRepository {
+	return &PostgresEventRepository{pgstore}
 }
 
 func (p PostgresEventRepository) FetchEvent(ctx context.Context, id int) (*models.Event, error) {
@@ -22,7 +22,7 @@ func (p PostgresEventRepository) FetchEvent(ctx context.Context, id int) (*model
 		ID: id,
 	}
 
-	row := p.db.QueryRow(ctx, "SELECT type, mgdl FROM events WHERE id = $1", id)
+	row := p.DB.QueryRow(ctx, "SELECT type, mgdl FROM events WHERE id = $1", id)
 	err := row.Scan(&event.Type, &event.Mgdl)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var ErrNotFound = errors.New("models: no resource could be found")
+
 type Event struct {
 	ID        int       `json:"id"`
 	Type      string    `json:"type"`

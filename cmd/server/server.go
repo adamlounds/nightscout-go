@@ -4,22 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	repository "github.com/adamlounds/nightscout-go/adapters"
+	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"os"
 )
 
-type config struct {
-	PSQL   models.PostgresConfig
-	Server struct {
-		Address string
-	}
-}
-
-func loadEnvConfig() (config, error) {
-	var cfg config
-	cfg.PSQL = models.PostgresConfig{
+func loadEnvConfig() (config.ServerConfig, error) {
+	var cfg config.ServerConfig
+	cfg.PSQL = config.PostgresConfig{
 		Host:     os.Getenv("POSTGRES_HOST"),
 		Port:     os.Getenv("POSTGRES_PORT"),
 		User:     os.Getenv("POSTGRES_USER"),
@@ -43,28 +39,26 @@ func main() {
 	}
 }
 
-func run(cfg config) error {
-	dbpool, err := models.Connect(context.Background(), cfg.PSQL)
+func run(cfg config.ServerConfig) error {
+	db, err := pgxpool.New(context.Background(), cfg.PSQL.String())
 	if err != nil {
 		return fmt.Errorf("run cannot connect to db: %w", err)
 	}
-	defer dbpool.Close()
+	defer db.Close()
 
 	var pgVersion string
-	err = dbpool.QueryRow(context.Background(), "select version()").Scan(&pgVersion)
+	err = db.QueryRow(context.Background(), "select version()").Scan(&pgVersion)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgVersion failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("pg connected [%s]\n", pgVersion)
 
-	eventService := &models.EventService{
-		DB: dbpool,
-	}
+	eventRepository := repository.NewPostgresEventRepository(db)
 
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		event, err := eventService.ByID(r.Context(), 1)
+		event, err := eventRepository.FetchEvent(r.Context(), 1)
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)

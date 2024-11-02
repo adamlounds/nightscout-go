@@ -6,9 +6,11 @@ import (
 	"fmt"
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
+	"github.com/adamlounds/nightscout-go/controllers"
 	"github.com/adamlounds/nightscout-go/models"
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"net/http"
 	"os"
 )
@@ -55,7 +57,18 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 
 	eventRepository := repository.NewPostgresEventRepository(pg)
 
+	// /api/v1/entries?count=60&token=ffs-358de43470f328f3
+
+	api1C := controllers.ApiV1{
+		EventRepository: eventRepository,
+	}
+
 	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/entries", api1C.ListEntries)
+	})
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		event, err := eventRepository.FetchEvent(r.Context(), 1)
 		if err != nil {

@@ -22,8 +22,8 @@ func (p PostgresEventRepository) FetchEvent(ctx context.Context, id int) (*model
 		ID: id,
 	}
 
-	row := p.DB.QueryRow(ctx, "SELECT type, mgdl FROM events WHERE id = $1", id)
-	err := row.Scan(&event.Type, &event.Mgdl)
+	row := p.DB.QueryRow(ctx, "SELECT type, mgdl, trend, created_at FROM events WHERE id = $1", id)
+	err := row.Scan(&event.Type, &event.Mgdl, &event.Direction, &event.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, models.ErrNotFound

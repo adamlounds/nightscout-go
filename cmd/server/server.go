@@ -67,10 +67,12 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/entries", api1C.ListEntries)
+		r.Get("/entries/", api1C.ListEntries)
+		r.Get("/entries/{oid:[a-f0-9]{24}}", api1C.EntryByOid)
+		r.Get("/entries/current", api1C.LatestEntry)
 	})
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		event, err := eventRepository.FetchEvent(r.Context(), 1)
+		event, err := eventRepository.FetchLatestEvent(r.Context())
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)

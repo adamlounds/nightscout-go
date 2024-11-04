@@ -13,12 +13,13 @@ type EventRepository interface {
 }
 
 type Event struct {
-	ID        int       `json:"id"`
-	Type      string    `json:"type"`
-	Mgdl      int       `json:"mgdl"` // mg/dL value for this event
-	Direction string    `json:"direction"`
-	DeviceId  int       `json:"device_id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int
+	Oid         string
+	Type        string
+	Mgdl        int // mg/dL value for this event
+	Direction   string
+	DeviceId    int
+	CreatedTime time.Time
 }
 
 type EventService struct {

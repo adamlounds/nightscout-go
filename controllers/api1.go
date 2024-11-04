@@ -60,12 +60,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
 		UtcOffset:  0,
 	}
-	err = json.NewEncoder(w).Encode(responseEvent)
-	if err != nil {
-		fmt.Printf("apiV1C ListEntries encoding failed: %v\n", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(responseEvent)
 }
 
 // /api/v1/entries/current - return latest sgv entry
@@ -94,12 +89,7 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
 		UtcOffset:  0,
 	}
-	err = json.NewEncoder(w).Encode(responseEvent)
-	if err != nil {
-		fmt.Printf("apiV1C LatestEntry encoding failed: %v\n", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(responseEvent)
 }
 
 // Default is `count=10`, for only 10 latest entries, reverse sorted by date
@@ -125,22 +115,8 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	events, err := a.FetchLatestEvents(ctx, count)
 	if err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
 		fmt.Printf("eventService.ByID failed: %v\n", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if len(events) == 0 {
-		err = json.NewEncoder(w).Encode(events)
-		if err != nil {
-			fmt.Printf("apiV1C ListEntries encoding empty events failed: %v\n", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
 		return
 	}
 
@@ -160,12 +136,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	err = json.NewEncoder(w).Encode(response)
-	if err != nil {
-		fmt.Printf("apiV1C ListEntries encoding failed: %v\n", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // receive

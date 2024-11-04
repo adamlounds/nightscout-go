@@ -51,17 +51,10 @@ func (p PostgresEventRepository) FetchLatestEvent(ctx context.Context) (*models.
 func (p PostgresEventRepository) FetchLatestEvents(ctx context.Context, maxEvents int) ([]models.Event, error) {
 	rows, err := p.DB.Query(ctx, "SELECT id, oid, type, mgdl, trend, device_id, created_time FROM events ORDER BY created_time DESC LIMIT $1", maxEvents)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, models.ErrNotFound
-		}
 		return nil, fmt.Errorf("pg FetchLatestEvents: %w", err)
 	}
 	events, err := pgx.CollectRows(rows, pgx.RowToStructByPos[models.Event])
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			panic("collectRows errored on no rows???")
-			return nil, models.ErrNotFound
-		}
 		return nil, fmt.Errorf("pg FetchLatestEvents collect: %w", err)
 	}
 	return events, nil

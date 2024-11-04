@@ -2,3 +2,4 @@ ns-go
 .idea
 .envrc
 .env
+cover.out

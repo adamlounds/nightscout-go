@@ -40,7 +40,7 @@ func (p PostgresAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context,
 
 	// TODO move to db
 	hashes := map[string]*models.AuthSubject{
-		"ffs-358de43470f328f3": &models.AuthSubject{
+		"ffs-358de43470f328f3": {
 			Name:      name,
 			RoleNames: []string{"admin", "cgm-uploader"},
 		},

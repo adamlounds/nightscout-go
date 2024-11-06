@@ -42,10 +42,9 @@ func (a ApiV1AuthnMiddleware) Authz(requiredRole string) func(http.Handler) http
 				next.ServeHTTP(w, r)
 			} else {
 				fmt.Printf("authz (%s) is NOT PERMITTED\n", requiredRole)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
 			}
-
-			next.ServeHTTP(w, r)
 		})
 	}
-
 }

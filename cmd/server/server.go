@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/controllers"
@@ -11,8 +16,6 @@ import (
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"net/http"
-	"os"
 )
 
 func loadEnvConfig() (config.ServerConfig, error) {
@@ -26,6 +29,17 @@ func loadEnvConfig() (config.ServerConfig, error) {
 		SSLMode:  os.Getenv("POSTGRES_SSLMODE"),
 	}
 	cfg.Server.Address = os.Getenv("SERVER_ADDRESS")
+
+	// Create SHA1 hash of API_SECRET
+	apiSecret := os.Getenv("API_SECRET")
+	hasher := sha1.New()
+	hasher.Write([]byte(apiSecret))
+	cfg.APISecretHash = hex.EncodeToString(hasher.Sum(nil))
+	cfg.DefaultRole = os.Getenv("DEFAULT_ROLE")
+	if cfg.DefaultRole == "" {
+		cfg.DefaultRole = "readable"
+	}
+
 	return cfg, nil
 }
 
@@ -55,21 +69,29 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		os.Exit(1)
 	}
 
+	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
 	eventRepository := repository.NewPostgresEventRepository(pg)
+
+	authService := &models.AuthService{authRepository}
 
 	// /api/v1/entries?count=60&token=ffs-358de43470f328f3
 
-	api1C := controllers.ApiV1{
+	apiV1C := controllers.ApiV1{
 		EventRepository: eventRepository,
+	}
+	apiV1mw := controllers.ApiV1AuthnMiddleware{
+		AuthService: authService,
 	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/entries/", api1C.ListEntries)
-		r.Get("/entries/{oid:[a-f0-9]{24}}", api1C.EntryByOid)
-		r.Get("/entries/current", api1C.LatestEntry)
+		r.Use(apiV1mw.SetAuthentication)
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/", apiV1C.ListEntries)
+		//r.With(apiV1mw.SetAuthentication).Get("/entries/", apiV1C.ListEntries)
+		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
+		r.Get("/entries/current", apiV1C.LatestEntry)
 	})
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		event, err := eventRepository.FetchLatestEvent(r.Context())

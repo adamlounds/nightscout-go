@@ -16,6 +16,11 @@ type EventRepository interface {
 	FetchLatestEvent(ctx context.Context) (*models.Event, error)
 	FetchLatestEvents(ctx context.Context, maxEvents int) ([]models.Event, error)
 }
+type AuthRepository interface {
+	GetAPISecretHash(ctx context.Context) string
+	GetDefaultRole(ctx context.Context) string
+	// something about fetching roles too, hence auth not authn in repository name
+}
 
 type ApiV1 struct {
 	EventRepository
@@ -63,7 +68,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(responseEvent)
 }
 
-// /api/v1/entries/current - return latest sgv entry
+// LatestEntry handler supports /api/v1/entries/current endpoint: return latest sgv entry
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
@@ -96,6 +101,9 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 // /api/v1/entries?count=60&token=ffs-358de43470f328f3
 // /api/v1/entries?count=1 for FreeStyle LibreLink Up NightScout Uploader
 func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
 	count, err := strconv.Atoi(r.URL.Query().Get("count"))
 	if err != nil {
 		if r.URL.Query().Get("count") != "" {
@@ -112,7 +120,6 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
 		return
 	}
-	ctx := r.Context()
 	events, err := a.FetchLatestEvents(ctx, count)
 	if err != nil {
 		fmt.Printf("eventService.ByID failed: %v\n", err)

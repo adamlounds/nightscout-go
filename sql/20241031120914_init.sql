@@ -7,7 +7,7 @@ create table entry (
     sgv_mgdl int NOT NULL,
     trend text,
     device_id int,
-    time timestamptz not null,
+    entry_time timestamptz not null,
     created_time timestamptz not null default now()
 );
 -- +goose StatementEnd

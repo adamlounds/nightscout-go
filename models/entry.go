@@ -16,9 +16,10 @@ type Entry struct {
 	ID          int
 	Oid         string
 	Type        string
-	Mgdl        int // mg/dL value for this entry
+	SgvMgdl     int // Sensor Glucose Value in mg/dL
 	Direction   string
 	DeviceId    int
+	Time        time.Time
 	CreatedTime time.Time
 }
 

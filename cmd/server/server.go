@@ -91,6 +91,7 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		r.Use(apiV1mw.SetAuthentication)
 		r.Use(middleware.URLFormat)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
+		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries", apiV1C.CreateEntries)
 		//r.With(apiV1mw.SetAuthentication).Get("/entries/", apiV1C.ListEntries)
 		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.Get("/entries/current", apiV1C.LatestEntry)

@@ -13,10 +13,10 @@ import (
 	"strings"
 )
 
-type EventRepository interface {
-	FetchEventByOid(ctx context.Context, oid string) (*models.Event, error)
-	FetchLatestEvent(ctx context.Context) (*models.Event, error)
-	FetchLatestEvents(ctx context.Context, maxEvents int) ([]models.Event, error)
+type EntryRepository interface {
+	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
+	FetchLatestEntry(ctx context.Context) (*models.Entry, error)
+	FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error)
 }
 type AuthRepository interface {
 	GetAPISecretHash(ctx context.Context) string
@@ -25,7 +25,7 @@ type AuthRepository interface {
 }
 
 type ApiV1 struct {
-	EventRepository
+	EntryRepository
 }
 
 type APIV1EntryResponse struct {
@@ -44,37 +44,37 @@ type APIV1EntryResponse struct {
 func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
 	ctx := r.Context()
-	event, err := a.FetchEventByOid(ctx, oid)
+	entry, err := a.FetchEntryByOid(ctx, oid)
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		fmt.Printf("eventService.ByID failed: %v\n", err)
+		fmt.Printf("entryService.ByID failed: %v\n", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	responseEvent := &APIV1EntryResponse{
-		Oid:        event.Oid,
-		Type:       event.Type,
-		Mgdl:       event.Mgdl,
-		Direction:  event.Direction,
+	responseEntry := &APIV1EntryResponse{
+		Oid:        entry.Oid,
+		Type:       entry.Type,
+		Mgdl:       entry.Mgdl,
+		Direction:  entry.Direction,
 		Device:     "dummydevice",
-		Date:       event.CreatedTime.UnixMilli(),
-		Mills:      event.CreatedTime.UnixMilli(),
-		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		Date:       entry.CreatedTime.UnixMilli(),
+		Mills:      entry.CreatedTime.UnixMilli(),
+		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 		UtcOffset:  0,
 	}
-	render.JSON(w, r, responseEvent)
+	render.JSON(w, r, responseEntry)
 }
 
 // LatestEntry handler supports /api/v1/entries/current endpoint: return latest sgv entry
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
-	event, err := a.FetchLatestEvent(ctx)
+	entry, err := a.FetchLatestEntry(ctx)
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -84,19 +84,19 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responseEvent := &APIV1EntryResponse{
-		Oid:        event.Oid,
-		Type:       event.Type,
-		Mgdl:       event.Mgdl,
-		Direction:  event.Direction,
+	responseEntry := &APIV1EntryResponse{
+		Oid:        entry.Oid,
+		Type:       entry.Type,
+		Mgdl:       entry.Mgdl,
+		Direction:  entry.Direction,
 		Device:     "dummydevice",
-		Date:       event.CreatedTime.UnixMilli(),
-		Mills:      event.CreatedTime.UnixMilli(),
-		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		Date:       entry.CreatedTime.UnixMilli(),
+		Mills:      entry.CreatedTime.UnixMilli(),
+		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 		UtcOffset:  0,
 	}
-	render.JSON(w, r, responseEvent)
+	render.JSON(w, r, responseEntry)
 }
 
 // Default is `count=10`, for only 10 latest entries, reverse sorted by date
@@ -122,9 +122,9 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
 		return
 	}
-	events, err := a.FetchLatestEvents(ctx, count)
+	entries, err := a.FetchLatestEntries(ctx, count)
 	if err != nil {
-		fmt.Printf("eventService.ByID failed: %v\n", err)
+		fmt.Printf("entryService.ByID failed: %v\n", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -132,17 +132,17 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 	if urlFormat == "json" {
 
 		var response []APIV1EntryResponse
-		for _, event := range events {
+		for _, entry := range entries {
 			response = append(response, APIV1EntryResponse{
-				Oid:        event.Oid,
-				Type:       event.Type,
-				Mgdl:       event.Mgdl,
-				Direction:  event.Direction,
+				Oid:        entry.Oid,
+				Type:       entry.Type,
+				Mgdl:       entry.Mgdl,
+				Direction:  entry.Direction,
 				Device:     "dummydevice",
-				Date:       event.CreatedTime.UnixMilli(),
-				Mills:      event.CreatedTime.UnixMilli(),
-				DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-				SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+				Date:       entry.CreatedTime.UnixMilli(),
+				Mills:      entry.CreatedTime.UnixMilli(),
+				DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+				SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 				UtcOffset:  0,
 			})
 		}
@@ -157,12 +157,12 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var responseEntries []string
-	for _, event := range events {
+	for _, entry := range entries {
 		parts := []string{
-			event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-			strconv.FormatInt(event.CreatedTime.UnixMilli(), 10),
-			strconv.Itoa(event.Mgdl),
-			event.Direction,
+			entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+			strconv.FormatInt(entry.CreatedTime.UnixMilli(), 10),
+			strconv.Itoa(entry.Mgdl),
+			entry.Direction,
 			"dummydevice",
 		}
 		responseEntries = append(responseEntries, strings.Join(parts, "\t"))

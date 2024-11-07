@@ -14,28 +14,28 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// mockEventRepository implements EventRepository interface for testing
-type mockEventRepository struct {
-	fetchByOidFn      func(ctx context.Context, oid string) (*models.Event, error)
-	fetchLatestFn     func(ctx context.Context) (*models.Event, error)
-	fetchLatestListFn func(ctx context.Context, maxEvents int) ([]models.Event, error)
+// mockEntryRepository implements EntryRepository interface for testing
+type mockEntryRepository struct {
+	fetchByOidFn      func(ctx context.Context, oid string) (*models.Entry, error)
+	fetchLatestFn     func(ctx context.Context) (*models.Entry, error)
+	fetchLatestListFn func(ctx context.Context, maxEntries int) ([]models.Entry, error)
 }
 
-func (m mockEventRepository) FetchEventByOid(ctx context.Context, oid string) (*models.Event, error) {
+func (m mockEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
 	return m.fetchByOidFn(ctx, oid)
 }
 
-func (m mockEventRepository) FetchLatestEvent(ctx context.Context) (*models.Event, error) {
+func (m mockEntryRepository) FetchLatestEntry(ctx context.Context) (*models.Entry, error) {
 	return m.fetchLatestFn(ctx)
 }
 
-func (m mockEventRepository) FetchLatestEvents(ctx context.Context, maxEvents int) ([]models.Event, error) {
-	return m.fetchLatestListFn(ctx, maxEvents)
+func (m mockEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+	return m.fetchLatestListFn(ctx, maxEntries)
 }
 
-// Helper function to create a test event
-func createTestEvent(oid string) *models.Event {
-	return &models.Event{
+// Helper function to create a test entry
+func createTestEntry(oid string) *models.Entry {
+	return &models.Entry{
 		Oid:         oid,
 		Type:        "sgv",
 		Mgdl:        120,
@@ -56,15 +56,15 @@ func TestApiV1_EntryByOid(t *testing.T) {
 	tests := []struct {
 		name           string
 		oid            string
-		mockFn         func(ctx context.Context, oid string) (*models.Event, error)
+		mockFn         func(ctx context.Context, oid string) (*models.Entry, error)
 		expectedStatus int
 		expectJSON     bool
 	}{
 		{
 			name: "success",
 			oid:  "123",
-			mockFn: func(ctx context.Context, oid string) (*models.Event, error) {
-				return createTestEvent(oid), nil
+			mockFn: func(ctx context.Context, oid string) (*models.Entry, error) {
+				return createTestEntry(oid), nil
 			},
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
@@ -72,7 +72,7 @@ func TestApiV1_EntryByOid(t *testing.T) {
 		{
 			name: "not found",
 			oid:  "456",
-			mockFn: func(ctx context.Context, oid string) (*models.Event, error) {
+			mockFn: func(ctx context.Context, oid string) (*models.Entry, error) {
 				return nil, models.ErrNotFound
 			},
 			expectedStatus: http.StatusNotFound,
@@ -81,7 +81,7 @@ func TestApiV1_EntryByOid(t *testing.T) {
 		{
 			name: "internal error",
 			oid:  "789",
-			mockFn: func(ctx context.Context, oid string) (*models.Event, error) {
+			mockFn: func(ctx context.Context, oid string) (*models.Entry, error) {
 				return nil, errors.New("internal error")
 			},
 			expectedStatus: http.StatusInternalServerError,
@@ -91,10 +91,10 @@ func TestApiV1_EntryByOid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockEventRepository{
+			mock := mockEntryRepository{
 				fetchByOidFn: tt.mockFn,
 			}
-			api := ApiV1{EventRepository: mock}
+			api := ApiV1{EntryRepository: mock}
 
 			r := setupTestRouter(api.EntryByOid, "GET", "/entry/{oid}")
 			req := httptest.NewRequest("GET", "/entry/"+tt.oid, nil)
@@ -123,21 +123,21 @@ func TestApiV1_EntryByOid(t *testing.T) {
 func TestApiV1_LatestEntry(t *testing.T) {
 	tests := []struct {
 		name           string
-		mockFn         func(ctx context.Context) (*models.Event, error)
+		mockFn         func(ctx context.Context) (*models.Entry, error)
 		expectedStatus int
 		expectJSON     bool
 	}{
 		{
 			name: "success",
-			mockFn: func(ctx context.Context) (*models.Event, error) {
-				return createTestEvent("123"), nil
+			mockFn: func(ctx context.Context) (*models.Entry, error) {
+				return createTestEntry("123"), nil
 			},
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
 		},
 		{
 			name: "not found",
-			mockFn: func(ctx context.Context) (*models.Event, error) {
+			mockFn: func(ctx context.Context) (*models.Entry, error) {
 				return nil, models.ErrNotFound
 			},
 			expectedStatus: http.StatusNotFound,
@@ -145,7 +145,7 @@ func TestApiV1_LatestEntry(t *testing.T) {
 		},
 		{
 			name: "internal error",
-			mockFn: func(ctx context.Context) (*models.Event, error) {
+			mockFn: func(ctx context.Context) (*models.Entry, error) {
 				return nil, errors.New("internal error")
 			},
 			expectedStatus: http.StatusInternalServerError,
@@ -155,10 +155,10 @@ func TestApiV1_LatestEntry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockEventRepository{
+			mock := mockEntryRepository{
 				fetchLatestFn: tt.mockFn,
 			}
-			api := ApiV1{EventRepository: mock}
+			api := ApiV1{EntryRepository: mock}
 
 			req := httptest.NewRequest("GET", "/entries/current", nil)
 			w := httptest.NewRecorder()
@@ -183,7 +183,7 @@ func TestApiV1_ListEntries(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryCount     string
-		mockFn         func(ctx context.Context, maxEvents int) ([]models.Event, error)
+		mockFn         func(ctx context.Context, maxEntries int) ([]models.Entry, error)
 		expectedStatus int
 		expectJSON     bool
 		expectedLen    int
@@ -191,12 +191,12 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "success with default count",
 			queryCount: "",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
-				events := make([]models.Event, maxEvents)
-				for i := 0; i < maxEvents; i++ {
-					events[i] = *createTestEvent("test" + string(rune(i)))
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+				entries := make([]models.Entry, maxEntries)
+				for i := 0; i < maxEntries; i++ {
+					entries[i] = *createTestEntry("test" + string(rune(i)))
 				}
-				return events, nil
+				return entries, nil
 			},
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
@@ -205,12 +205,12 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "success with custom count",
 			queryCount: "5",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
-				events := make([]models.Event, maxEvents)
-				for i := 0; i < maxEvents; i++ {
-					events[i] = *createTestEvent("test" + string(rune(i)))
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+				entries := make([]models.Entry, maxEntries)
+				for i := 0; i < maxEntries; i++ {
+					entries[i] = *createTestEntry("test" + string(rune(i)))
 				}
-				return events, nil
+				return entries, nil
 			},
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
@@ -219,7 +219,7 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "invalid count parameter",
 			queryCount: "invalid",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
 				return nil, nil
 			},
 			expectedStatus: http.StatusBadRequest,
@@ -228,7 +228,7 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "count too small",
 			queryCount: "0",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
 				return nil, nil
 			},
 			expectedStatus: http.StatusBadRequest,
@@ -237,7 +237,7 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "count too large",
 			queryCount: "50001",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
 				return nil, nil
 			},
 			expectedStatus: http.StatusBadRequest,
@@ -246,7 +246,7 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "repository error",
 			queryCount: "10",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
 				return nil, errors.New("internal error")
 			},
 			expectedStatus: http.StatusInternalServerError,
@@ -255,8 +255,8 @@ func TestApiV1_ListEntries(t *testing.T) {
 		{
 			name:       "empty result",
 			queryCount: "10",
-			mockFn: func(ctx context.Context, maxEvents int) ([]models.Event, error) {
-				return []models.Event{}, nil
+			mockFn: func(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+				return []models.Entry{}, nil
 			},
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
@@ -266,10 +266,10 @@ func TestApiV1_ListEntries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := mockEventRepository{
+			mock := mockEntryRepository{
 				fetchLatestListFn: tt.mockFn,
 			}
-			api := ApiV1{EventRepository: mock}
+			api := ApiV1{EntryRepository: mock}
 
 			r := setupTestRouter(api.ListEntries, "GET", "/entries")
 			url := "/entries.json"

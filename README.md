@@ -30,7 +30,7 @@ Feasibility study to see if Go-based nightscout would be useful.
 No other endpoints are used
 
 [nightscout-librelink-up](https://github.com/timoschlueter/nightscout-librelink-up)
-- `GET /api/v1/entries?count=1` (determine most-recent known event before each upload)
+- `GET /api/v1/entries?count=1` (determine most-recent known entry before each upload)
 - `POST /api/v1/entries` (upload any new sgv entries)
 Perms to support this would be `api:entries:read,create`
 
@@ -45,7 +45,7 @@ Perms to support this would be `api:entries:read,create`
 - `/api/v1/devicestatus?count=1&token=<tok>`
 
 Note: sometimes datetime has trailing `}`. Both `$gt` and `$gte` are used.
-Regexp used to find Sensor Start/Change events
+Regexp used to find Sensor Start/Change entries
 
 nightguard ios app fetches much more info :)
 

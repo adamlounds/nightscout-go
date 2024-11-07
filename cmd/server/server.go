@@ -70,14 +70,14 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	}
 
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
-	eventRepository := repository.NewPostgresEventRepository(pg)
+	entryRepository := repository.NewPostgresEntryRepository(pg)
 
 	authService := &models.AuthService{authRepository}
 
 	// /api/v1/entries?count=60&token=ffs-358de43470f328f3
 
 	apiV1C := controllers.ApiV1{
-		EventRepository: eventRepository,
+		EntryRepository: entryRepository,
 	}
 	apiV1mw := controllers.ApiV1AuthnMiddleware{
 		AuthService: authService,
@@ -96,17 +96,17 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		r.Get("/entries/current", apiV1C.LatestEntry)
 	})
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		event, err := eventRepository.FetchLatestEvent(r.Context())
+		entry, err := entryRepository.FetchLatestEntry(r.Context())
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
-			fmt.Printf("eventService.ByID failed: %v\n", err)
+			fmt.Printf("entryService.ByID failed: %v\n", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%#v", event)))
+		w.Write([]byte(fmt.Sprintf("%#v", entry)))
 	})
 	fmt.Printf("Starting server on [%s]\n", cfg.Server.Address)
 	return http.ListenAndServe(cfg.Server.Address, r)

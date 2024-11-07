@@ -47,3 +47,22 @@ Perms to support this would be `api:entries:read,create`
 Note: sometimes datetime has trailing `}`. Both `$gt` and `$gte` are used.
 Regexp used to find Sensor Start/Change events
 
+nightguard ios app fetches much more info :)
+
+```
+"/api/v1/devicestatus.json?count=5"
+"/api/v1/treatments?count=1&find%5BeventType%5D=Temporary%20Target&find%5Bcreated_at%5D%5B$gte%5D=2024-11-05"
+"/api/v1/treatments?count=1&find%5BeventType%5D=Pump%20Battery%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-09-27"
+"/api/v1/treatments?count=1&find%5BeventType%5D=Sensor%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23"
+"/api/v1/treatments?count=1&find%5BeventType%5D=Site%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
+"/api/v2/properties?"
+"/api/v1/treatments.json?"
+"/api/v1/entries.json?find%5Bdate%5D%5B$gt%5D=1730851200000.0&find%5Bdate%5D%5B$lte%5D=1730937600000.0&count=1440"
+"/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-05&find%5BeventType%5D=Temporary%20Target"
+"/api/v1/entries.json?find%5Bdate%5D%5B$gt%5D=1730764800000.0&find%5Bdate%5D%5B$lte%5D=1730851200000.0&count=1440"
+"/api/v1/status.json?"
+"/api/v1/entries.json?find%5Bdate%5D%5B$lte%5D=1730937600000.0&find%5Bdate%5D%5B$gt%5D=1730932773000.0&count=1440"
+"/api/v2/properties?"
+"/api/v1/treatments?find%5BeventType%5D=Site%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
+"/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23&find%5BeventType%5D=Sensor%20Change"
+```

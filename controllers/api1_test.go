@@ -11,6 +11,7 @@ import (
 
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // mockEventRepository implements EventRepository interface for testing
@@ -46,6 +47,7 @@ func createTestEvent(oid string) *models.Event {
 // Helper function to setup router with URL parameters
 func setupTestRouter(handler http.HandlerFunc, method, path string) *chi.Mux {
 	r := chi.NewRouter()
+	r.Use(middleware.URLFormat)
 	r.Method(method, path, handler)
 	return r
 }
@@ -269,19 +271,25 @@ func TestApiV1_ListEntries(t *testing.T) {
 			}
 			api := ApiV1{EventRepository: mock}
 
-			url := "/entries"
+			r := setupTestRouter(api.ListEntries, "GET", "/entries")
+			url := "/entries.json"
 			if tt.queryCount != "" {
 				url += "?count=" + tt.queryCount
 			}
 			req := httptest.NewRequest("GET", url, nil)
 			w := httptest.NewRecorder()
-			api.ListEntries(w, req)
+
+			r.ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 
 			if tt.expectJSON {
+				if w.Body.Len() == 0 {
+					t.Error("Expected non-empty response body")
+					return
+				}
 				var response []APIV1EntryResponse
 				err := json.NewDecoder(w.Body).Decode(&response)
 				if err != nil {

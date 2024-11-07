@@ -86,9 +86,11 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
+	r.Use(middleware.StripSlashes)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(apiV1mw.SetAuthentication)
-		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/", apiV1C.ListEntries)
+		r.Use(middleware.URLFormat)
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
 		//r.With(apiV1mw.SetAuthentication).Get("/entries/", apiV1C.ListEntries)
 		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.Get("/entries/current", apiV1C.LatestEntry)

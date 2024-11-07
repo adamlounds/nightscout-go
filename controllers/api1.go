@@ -2,13 +2,15 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/render"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type EventRepository interface {
@@ -61,11 +63,11 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 		Device:     "dummydevice",
 		Date:       event.CreatedTime.UnixMilli(),
 		Mills:      event.CreatedTime.UnixMilli(),
-		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
-		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
+		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 		UtcOffset:  0,
 	}
-	json.NewEncoder(w).Encode(responseEvent)
+	render.JSON(w, r, responseEvent)
 }
 
 // LatestEntry handler supports /api/v1/entries/current endpoint: return latest sgv entry
@@ -90,19 +92,19 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		Device:     "dummydevice",
 		Date:       event.CreatedTime.UnixMilli(),
 		Mills:      event.CreatedTime.UnixMilli(),
-		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
-		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
+		DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 		UtcOffset:  0,
 	}
-	json.NewEncoder(w).Encode(responseEvent)
+	render.JSON(w, r, responseEvent)
 }
 
 // Default is `count=10`, for only 10 latest entries, reverse sorted by date
 // /api/v1/entries?count=60&token=ffs-358de43470f328f3
 // /api/v1/entries?count=1 for FreeStyle LibreLink Up NightScout Uploader
 func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
-
 	ctx := r.Context()
+	urlFormat, _ := ctx.Value(middleware.URLFormatCtxKey).(string)
 
 	count, err := strconv.Atoi(r.URL.Query().Get("count"))
 	if err != nil {
@@ -127,23 +129,47 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var response []APIV1EntryResponse
-	for _, event := range events {
-		response = append(response, APIV1EntryResponse{
-			Oid:        event.Oid,
-			Type:       event.Type,
-			Mgdl:       event.Mgdl,
-			Direction:  event.Direction,
-			Device:     "dummydevice",
-			Date:       event.CreatedTime.UnixMilli(),
-			Mills:      event.CreatedTime.UnixMilli(),
-			DateString: event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
-			SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.999Z"),
-			UtcOffset:  0,
-		})
+	if urlFormat == "json" {
+
+		var response []APIV1EntryResponse
+		for _, event := range events {
+			response = append(response, APIV1EntryResponse{
+				Oid:        event.Oid,
+				Type:       event.Type,
+				Mgdl:       event.Mgdl,
+				Direction:  event.Direction,
+				Device:     "dummydevice",
+				Date:       event.CreatedTime.UnixMilli(),
+				Mills:      event.CreatedTime.UnixMilli(),
+				DateString: event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+				SysTime:    event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+				UtcOffset:  0,
+			})
+		}
+
+		render.JSON(w, r, response)
+		return
 	}
 
-	json.NewEncoder(w).Encode(response)
+	if urlFormat != "" {
+		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	var responseEntries []string
+	for _, event := range events {
+		parts := []string{
+			event.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+			strconv.FormatInt(event.CreatedTime.UnixMilli(), 10),
+			strconv.Itoa(event.Mgdl),
+			event.Direction,
+			"dummydevice",
+		}
+		responseEntries = append(responseEntries, strings.Join(parts, "\t"))
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	render.PlainText(w, r, strings.Join(responseEntries, "\n"))
+
 }
 
 // receive

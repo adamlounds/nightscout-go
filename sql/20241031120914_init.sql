@@ -1,14 +1,15 @@
 -- +goose Up
 -- +goose StatementBegin
-create table entry (
-    id int generated always as identity primary key,
-    oid text NOT NULL UNIQUE,
-    type text NOT NULL,
-    sgv_mgdl int NOT NULL,
-    trend text,
-    device_id int,
-    entry_time timestamptz not null,
-    created_time timestamptz not null default now()
+CREATE TABLE entry
+(
+    id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    oid          TEXT        NOT NULL UNIQUE,
+    type         TEXT        NOT NULL,
+    sgv_mgdl     INT         NOT NULL,
+    trend        TEXT,
+    device_id    INT,
+    entry_time   timestamptz NOT NULL,
+    created_time timestamptz NOT NULL DEFAULT NOW()
 );
 -- +goose StatementEnd
 

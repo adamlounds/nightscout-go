@@ -71,7 +71,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 		Type:       entry.Type,
 		SgvMgdl:    entry.SgvMgdl,
 		Direction:  entry.Direction,
-		Device:     "dummydevice",
+		Device:     entry.Device,
 		Date:       entry.CreatedTime.UnixMilli(),
 		Mills:      entry.CreatedTime.UnixMilli(),
 		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
@@ -100,7 +100,7 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		Type:       entry.Type,
 		SgvMgdl:    entry.SgvMgdl,
 		Direction:  entry.Direction,
-		Device:     "dummydevice",
+		Device:     entry.Device,
 		Date:       entry.CreatedTime.UnixMilli(),
 		Mills:      entry.CreatedTime.UnixMilli(),
 		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
@@ -163,7 +163,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 				Type:       entry.Type,
 				SgvMgdl:    entry.SgvMgdl,
 				Direction:  entry.Direction,
-				Device:     "dummydevice",
+				Device:     entry.Device,
 				Date:       entry.CreatedTime.UnixMilli(),
 				Mills:      entry.CreatedTime.UnixMilli(),
 				DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
@@ -243,11 +243,13 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 			SgvMgdl:     reqEntry.SgvMgdl,
 			Direction:   reqEntry.Direction,
 			Time:        entryTime,
+			Device:      reqEntry.Device,
 			CreatedTime: now,
 		})
 	}
 
 	if err := a.EntryRepository.CreateEntries(ctx, entries); err != nil {
+		fmt.Printf("could not create entries: %v\n", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

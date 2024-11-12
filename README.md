@@ -8,9 +8,9 @@ Feasibility study to see if Go-based nightscout would be useful.
     - Could we use s3/dynamo, cloudflare r2/kv or other free-tier storage?
 
 ## Initial Spike
- - [ ] support uploads from [nightscout-librelink-up](https://github.com/timoschlueter/nightscout-librelink-up)
- - [ ] support [MacOS menu bar](https://github.com/adamd9/Nightscout-MacOS-Menu-Bar)
- - [x] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
+ - [X] support uploads from [nightscout-librelink-up](https://github.com/timoschlueter/nightscout-librelink-up)
+ - [X] support [MacOS menu bar](https://github.com/adamd9/Nightscout-MacOS-Menu-Bar) (nb: only supports https)
+ - [X] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
 
 ## Discoveries:
 - v1 api has at least four different ways to authenticate

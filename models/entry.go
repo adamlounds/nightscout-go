@@ -16,7 +16,7 @@ type Entry struct {
 	ID          int
 	Oid         string
 	Type        string
-	SgvMgdl     int // Sensor Glucose Value
+	SgvMgdl     int
 	Direction   string
 	Device      string
 	Time        time.Time

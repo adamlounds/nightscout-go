@@ -21,6 +21,23 @@ func NewPostgresEntryRepository(pgstore *pgstore.PostgresStore) *PostgresEntryRe
 	return &PostgresEntryRepository{pgstore}
 }
 
+type device struct {
+	ID          int
+	Name        string
+	CreatedTime time.Time
+}
+
+type entry struct {
+	ID          int
+	Oid         string
+	Type        string
+	SgvMgdl     int
+	Trend       string
+	DeviceID    int
+	EventTime   time.Time
+	CreatedTime time.Time
+}
+
 func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
 	entry := models.Entry{
 		Oid: oid,
@@ -74,12 +91,6 @@ func (p PostgresEntryRepository) FetchLatestEntries(ctx context.Context, maxEntr
 	return entries, nil
 }
 
-type device struct {
-	ID          int
-	Name        string
-	CreatedTime time.Time
-}
-
 func (p PostgresEntryRepository) FetchAllDevices(ctx context.Context) ([]device, error) {
 	rows, err := p.DB.Query(ctx, `SELECT id, name, created_time from device`)
 	if err != nil {
@@ -87,7 +98,7 @@ func (p PostgresEntryRepository) FetchAllDevices(ctx context.Context) ([]device,
 	}
 	devices, err := pgx.CollectRows(rows, pgx.RowToStructByPos[device])
 	if err != nil {
-		return nil, fmt.Errorf("pg FetchLatestEntries collect: %w", err)
+		return nil, fmt.Errorf("pg FetchAllDevices collect: %w", err)
 	}
 	return devices, nil
 }
@@ -95,7 +106,7 @@ func (p PostgresEntryRepository) FetchAllDevices(ctx context.Context) ([]device,
 func (p PostgresEntryRepository) deviceIDsByName(ctx context.Context) (map[string]int, error) {
 	devices, err := p.FetchAllDevices(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pg deviceIDsByName: %w", err)
+		return nil, fmt.Errorf("pg deviceIDsByName cannot fetch devices: %w", err)
 	}
 	deviceIDsByName := make(map[string]int, len(devices))
 	for _, device := range devices {
@@ -107,7 +118,7 @@ func (p PostgresEntryRepository) deviceIDsByName(ctx context.Context) (map[strin
 func (p PostgresEntryRepository) InsertMissingDevices(ctx context.Context, entries []models.Entry) (map[string]int, error) {
 	knownDevices, err := p.deviceIDsByName(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pg CreateEntries cannot fetch devices: %w", err)
+		return nil, fmt.Errorf("pg InsertMissingDevices cannot fetch device ids: %w", err)
 	}
 
 	var devicesToAdd []string
@@ -139,7 +150,7 @@ func (p PostgresEntryRepository) InsertMissingDevices(ctx context.Context, entri
 
 	insertedDevices, err := pgx.CollectRows(rows, pgx.RowToStructByPos[device])
 	if err != nil {
-		return nil, fmt.Errorf("pg InsertMissingDevices cannot get returned ids: %w", err)
+		return nil, fmt.Errorf("pg InsertMissingDevices cannot get inserted rows: %w", err)
 	}
 	for _, insertedDevice := range insertedDevices {
 		knownDevices[insertedDevice.Name] = insertedDevice.ID
@@ -149,14 +160,18 @@ func (p PostgresEntryRepository) InsertMissingDevices(ctx context.Context, entri
 }
 
 // CreateEntries supports adding new entries to the db.
-func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) error {
+func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error) {
 	if len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	knownDevices, err := p.InsertMissingDevices(ctx, entries)
 	if err != nil {
-		return fmt.Errorf("cannot createEntries: %w", err)
+		return nil, fmt.Errorf("cannot insert missing devices: %w", err)
+	}
+	deviceNamesByID := make(map[int]string, len(knownDevices))
+	for deviceName, deviceID := range knownDevices {
+		deviceNamesByID[deviceID] = deviceName
 	}
 
 	// Support multiple inserts via a single SQL query
@@ -171,12 +186,13 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 		}
 
 		if entry.Oid == "" {
-			entry.Oid = primitive.NewObjectID().Hex()
+			// TODO look at reimplementing: mongo's sdk never resets the counter
+			entry.Oid = primitive.NewObjectIDFromTimestamp(entry.Time).Hex()
 		}
 
 		deviceId, ok := knownDevices[entry.Device]
 		if !ok {
-			return fmt.Errorf("pg CreateEntries cannot find device for %s", entry.Device)
+			return nil, fmt.Errorf("pg CreateEntries cannot find device for %s", entry.Device)
 		}
 
 		valueArgs = append(valueArgs,
@@ -188,13 +204,34 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 			entry.Time)
 	}
 
-	query := fmt.Sprintf("INSERT INTO entry (oid, type, sgv_mgdl, trend, device_id, entry_time) VALUES %s ON CONFLICT (oid) DO NOTHING",
+	query := fmt.Sprintf("INSERT INTO entry (oid, type, sgv_mgdl, trend, device_id, entry_time) VALUES %s ON CONFLICT (oid) DO NOTHING RETURNING *",
 		strings.Join(valueStrings, ","))
 
-	_, err = p.DB.Exec(ctx, query, valueArgs...)
+	rows, err := p.DB.Query(ctx, query, valueArgs...)
 	if err != nil {
-		return fmt.Errorf("pg CreateEntries: %w", err)
+		return nil, fmt.Errorf("pg CreateEntries cannot insert: %w", err)
 	}
 
-	return nil
+	insertedEntries, err := pgx.CollectRows(rows, pgx.RowToStructByPos[entry])
+	if err != nil {
+		return nil, fmt.Errorf("pg CreateEntries cannot get inserted rows: %w", err)
+	}
+
+	var modelEntries []models.Entry
+	for _, insertedEntry := range insertedEntries {
+
+		deviceName := deviceNamesByID[insertedEntry.DeviceID]
+		modelEntries = append(modelEntries, models.Entry{
+			ID:          insertedEntry.ID,
+			Oid:         insertedEntry.Oid,
+			Type:        insertedEntry.Type,
+			SgvMgdl:     insertedEntry.SgvMgdl,
+			Direction:   insertedEntry.Trend,
+			Device:      deviceName,
+			Time:        insertedEntry.EventTime,
+			CreatedTime: insertedEntry.CreatedTime,
+		})
+	}
+
+	return modelEntries, nil
 }

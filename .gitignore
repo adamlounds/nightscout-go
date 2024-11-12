@@ -3,3 +3,4 @@ ns-go
 .envrc
 .env
 cover.html
+coverage.out

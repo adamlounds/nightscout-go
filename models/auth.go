@@ -11,22 +11,22 @@ type AuthService struct {
 }
 
 type AuthSubject struct {
-	ID          int
+	CreatedTime time.Time
+	UpdatedTime time.Time
 	Oid         string
 	Name        string
 	Notes       string
 	RoleNames   []string
-	CreatedTime time.Time
-	UpdatedTime time.Time
+	ID          int
 }
 
 type Role struct {
-	ID          int
-	Name        string
-	Permissions []string
-	Notes       string
 	CreatedTime time.Time
 	UpdatedTime time.Time
+	Name        string
+	Notes       string
+	Permissions []string
+	ID          int
 }
 
 type AuthRepository interface {
@@ -37,9 +37,9 @@ type AuthRepository interface {
 }
 
 type Authn struct {
+	AuthSubject   *AuthSubject
 	ApiSecretHash string
 	AuthToken     string
-	AuthSubject   *AuthSubject
 }
 
 func (service *AuthService) AuthFromHTTP(ctx context.Context, apiSecretHash string, authToken string) *Authn {

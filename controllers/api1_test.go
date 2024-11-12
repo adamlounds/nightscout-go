@@ -19,7 +19,7 @@ type mockEntryRepository struct {
 	fetchByOidFn      func(ctx context.Context, oid string) (*models.Entry, error)
 	fetchLatestFn     func(ctx context.Context) (*models.Entry, error)
 	fetchLatestListFn func(ctx context.Context, maxEntries int) ([]models.Entry, error)
-	createEntriesFn   func(ctx context.Context, entries []models.Entry) error
+	createEntriesFn   func(ctx context.Context, entries []models.Entry) ([]models.Entry, error)
 }
 
 func (m mockEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
@@ -34,7 +34,7 @@ func (m mockEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries 
 	return m.fetchLatestListFn(ctx, maxEntries)
 }
 
-func (m mockEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) error {
+func (m mockEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error) {
 	return m.createEntriesFn(ctx, entries)
 }
 

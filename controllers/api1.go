@@ -115,6 +115,10 @@ func (a ApiV1) urlFormat(r *http.Request) string {
 	if urlFormat != "" {
 		return urlFormat
 	}
+	ct := r.Header.Get("content-type")
+	if ct == "application/json" {
+		return "json"
+	}
 
 	return ""
 }

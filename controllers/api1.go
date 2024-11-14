@@ -223,8 +223,14 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		entryTime, err := time.Parse(time.RFC3339, reqEntry.Date)
 		if err != nil {
-			http.Error(w, "invalid date format", http.StatusBadRequest)
-			return
+			// also try offset without a colon, as used by xDrip back-fill
+			entryTime, err = time.Parse("2006-01-02T15:04:05.999999999Z0700", reqEntry.Date)
+			if err != nil {
+				fmt.Printf("invalid date format [%s]\n", reqEntry.Date)
+				http.Error(w, "invalid date format", http.StatusBadRequest)
+				return
+			}
+			reqEntry.Date = entryTime.Format("2006-01-02T15:04:05.000Z")
 		}
 
 		entries = append(entries, models.Entry{

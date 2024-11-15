@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
@@ -17,6 +20,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
+
+var logLevels = map[string]slog.Level{
+	"debug": slog.LevelDebug,
+	"info":  slog.LevelInfo,
+	"warn":  slog.LevelWarn,
+	"error": slog.LevelError,
+}
 
 func loadEnvConfig() (config.ServerConfig, error) {
 	var cfg config.ServerConfig
@@ -40,6 +50,12 @@ func loadEnvConfig() (config.ServerConfig, error) {
 		cfg.DefaultRole = "readable"
 	}
 
+	logLevel, ok := logLevels[strings.ToLower(os.Getenv("LOG_LEVEL"))]
+	if !ok {
+		logLevel = slog.LevelInfo
+	}
+	cfg.LogLevel = logLevel
+
 	return cfg, nil
 }
 
@@ -49,23 +65,33 @@ func main() {
 		panic(err)
 	}
 
-	err = run(context.Background(), cfg)
+	opts := &slog.HandlerOptions{
+		Level: cfg.LogLevel,
+	}
+	h := slogctx.NewHandler(slog.NewJSONHandler(os.Stdout, opts), nil)
+	log := slog.New(h)
+	slog.SetDefault(log.With(slog.Int("pid", os.Getpid())))
+	ctx := slogctx.NewCtx(context.Background(), slog.Default())
+
+	err = run(ctx, cfg)
 	if err != nil {
 		panic(err)
 	}
 }
 
 func run(ctx context.Context, cfg config.ServerConfig) error {
+	log := slogctx.FromCtx(ctx)
+
 	pg, err := postgres.New(cfg.PSQL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "run cannot setup db: %s\n", err)
+		log.Error("run cannot setup db", slog.Any("error", err))
 		os.Exit(1)
 	}
 	defer pg.Close()
 
 	err = pg.Ping(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "run cannot ping db: %s\n", err)
+		log.Error("run cannot ping db", slog.Any("error", err))
 		os.Exit(1)
 	}
 
@@ -103,12 +129,12 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
-			fmt.Printf("entryService.ByID failed: %v\n", err)
+			log.Info("entryService.ByID failed", slog.Any("error", err))
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.Write([]byte(fmt.Sprintf("%#v", entry)))
 	})
-	fmt.Printf("Starting server on [%s]\n", cfg.Server.Address)
+	log.Info("Starting server on", "address", cfg.Server.Address)
 	return http.ListenAndServe(cfg.Server.Address, r)
 }

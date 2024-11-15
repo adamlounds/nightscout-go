@@ -8,6 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
+	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,13 +56,14 @@ type APIV1EntryRequest struct {
 func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
 	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
 	entry, err := a.FetchEntryByOid(ctx, oid)
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		fmt.Printf("entryService.ByID failed: %v\n", err)
+		log.Warn("entryService.ByID failed", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -171,6 +174,7 @@ var entryTypeIDByName = map[string]entryTypeID{
 // /api/v1/entries?count=1 for FreeStyle LibreLink Up NightScout Uploader
 func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
 
 	count, err := strconv.Atoi(r.URL.Query().Get("count"))
 	if err != nil {
@@ -190,7 +194,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := a.FetchLatestEntries(ctx, count)
 	if err != nil {
-		fmt.Printf("entryService.ByID failed: %v\n", err)
+		log.Warn("entryService.ByID failed", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -211,6 +215,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 // CreateEntries allows creation of new entries via POST /api/v1/entries
 func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
 
 	var requestEntries []APIV1EntryRequest
 	if err := render.DecodeJSON(r.Body, &requestEntries); err != nil {
@@ -226,7 +231,7 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 			// also try offset without a colon, as used by xDrip back-fill
 			entryTime, err = time.Parse("2006-01-02T15:04:05.999999999Z0700", reqEntry.Date)
 			if err != nil {
-				fmt.Printf("invalid date format [%s]\n", reqEntry.Date)
+				log.Info("invalid date format", slog.String("entryDate", reqEntry.Date))
 				http.Error(w, "invalid date format", http.StatusBadRequest)
 				return
 			}
@@ -245,7 +250,7 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 
 	insertedEntries, err := a.EntryRepository.CreateEntries(ctx, entries)
 	if err != nil {
-		fmt.Printf("could not create entries: %v\n", err)
+		log.Warn("could not create entries", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

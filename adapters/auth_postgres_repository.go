@@ -2,9 +2,9 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
 	pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
+	slogctx "github.com/veqryn/slog-context"
 	"strings"
 )
 
@@ -29,18 +29,20 @@ func (p PostgresAuthRepository) GetDefaultRole(ctx context.Context) string {
 var unknownAuthSubject = &models.AuthSubject{Name: "anonymous", RoleNames: []string{}}
 
 func (p PostgresAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, authToken string) *models.AuthSubject {
+	log := slogctx.FromCtx(ctx)
 	if authToken == "" {
 		return unknownAuthSubject
 	}
 	name, _, found := strings.Cut(authToken, "-")
 	if !found {
-		fmt.Println("auth token is invalid, should be name-hash")
+		log.Debug("auth token is invalid, should be name-hash")
 		return unknownAuthSubject
 	}
 
 	// TODO move to db
 	hashes := map[string]*models.AuthSubject{
 		"ffs-358de43470f328f3": {
+			ID:        123,
 			Name:      name,
 			RoleNames: []string{"admin", "cgm-uploader"},
 		},
@@ -48,7 +50,7 @@ func (p PostgresAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context,
 
 	authSubject, ok := hashes[authToken]
 	if !ok {
-		fmt.Println("auth token not found")
+		log.Debug("auth token not recognized")
 		return unknownAuthSubject
 	}
 	return authSubject

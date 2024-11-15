@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
+	slogctx "github.com/veqryn/slog-context"
 )
 
 type PostgresConfig struct {
@@ -27,7 +28,6 @@ type PostgresStore struct {
 func New(cfg PostgresConfig) (*PostgresStore, error) {
 	db, err := pgxpool.New(context.Background(), cfg.String())
 	if err != nil {
-		fmt.Printf("urgh %v", err)
 		return nil, fmt.Errorf("run cannot set up db: %w", err)
 	}
 	return &PostgresStore{DB: db}, nil
@@ -38,12 +38,13 @@ func (p *PostgresStore) Close() {
 }
 
 func (p *PostgresStore) Ping(ctx context.Context) error {
+	log := slogctx.FromCtx(ctx)
 	var pgVersion string
 	err := p.DB.QueryRow(ctx, "select version()").Scan(&pgVersion)
 	if err != nil {
 		return fmt.Errorf("pg cannot ping db: %w", err)
 	}
-	fmt.Printf("pg Ping ok [%s]\n", pgVersion)
+	log.Info("pg Ping ok", "version", pgVersion)
 	return nil
 
 }

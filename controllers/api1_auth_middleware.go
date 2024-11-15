@@ -1,9 +1,10 @@
 package controllers
 
 import (
-	"fmt"
 	"github.com/adamlounds/nightscout-go/middleware"
 	"github.com/adamlounds/nightscout-go/models"
+	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
 	"net/http"
 )
 
@@ -14,6 +15,7 @@ type ApiV1AuthnMiddleware struct {
 func (a ApiV1AuthnMiddleware) SetAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		log := slogctx.FromCtx(ctx)
 
 		apiSecretHash := r.Header.Get("api-secret")
 		if apiSecretHash == "" {
@@ -23,7 +25,7 @@ func (a ApiV1AuthnMiddleware) SetAuthentication(next http.Handler) http.Handler 
 
 		authn := a.AuthFromHTTP(ctx, apiSecretHash, authToken)
 
-		fmt.Printf("SetAuthentication %v\n", authn)
+		log.Debug("SetAuthentication", slog.Any("authn", authn))
 		ctx = middleware.WithAuthn(ctx, authn)
 		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
@@ -34,14 +36,15 @@ func (a ApiV1AuthnMiddleware) Authz(requiredRole string) func(http.Handler) http
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
+			log := slogctx.FromCtx(ctx)
 			authn := middleware.GetAuthn(ctx)
-			fmt.Printf("authz (%s) got ctx authn [%#v]\n", requiredRole, authn)
+			log.Debug("Authzmw got authn from ctx", slog.Any("authn", authn), slog.String("requiredRole", requiredRole))
 
 			if a.IsPermitted(ctx, authn, requiredRole) {
-				fmt.Printf("authz (%s) is permitted\n", requiredRole)
+				log.Debug("Authzmw ok", slog.String("requiredRole", requiredRole))
 				next.ServeHTTP(w, r)
 			} else {
-				fmt.Printf("authz (%s) is NOT PERMITTED\n", requiredRole)
+				log.Debug("Authzmw rejected", slog.String("requiredRole", requiredRole))
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}

@@ -1,6 +1,9 @@
 package config
 
-import pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
+import (
+	pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
+	"log/slog"
+)
 
 type ServerConfig struct {
 	APISecretHash string
@@ -9,4 +12,5 @@ type ServerConfig struct {
 	Server        struct {
 		Address string
 	}
+	LogLevel slog.Level
 }

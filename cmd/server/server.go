@@ -2,65 +2,28 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	slogctx "github.com/veqryn/slog-context"
-	"log/slog"
-	"net/http"
-	"os"
-	"strings"
-
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/controllers"
 	"github.com/adamlounds/nightscout-go/models"
+	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	//"github.com/thanos-io/objstore/providers/s3"
+	"log/slog"
+	"net/http"
+	"os"
+
+	slogctx "github.com/veqryn/slog-context"
+	//"github.com/thanos-io/objstore/providers/s3"
 )
 
-var logLevels = map[string]slog.Level{
-	"debug": slog.LevelDebug,
-	"info":  slog.LevelInfo,
-	"warn":  slog.LevelWarn,
-	"error": slog.LevelError,
-}
-
-func loadEnvConfig() (config.ServerConfig, error) {
-	var cfg config.ServerConfig
-	cfg.PSQL = postgres.PostgresConfig{
-		Host:     os.Getenv("POSTGRES_HOST"),
-		Port:     os.Getenv("POSTGRES_PORT"),
-		User:     os.Getenv("POSTGRES_USER"),
-		Password: os.Getenv("POSTGRES_PASSWORD"),
-		Database: os.Getenv("POSTGRES_DB"),
-		SSLMode:  os.Getenv("POSTGRES_SSLMODE"),
-	}
-	cfg.Server.Address = os.Getenv("SERVER_ADDRESS")
-
-	// Create SHA1 hash of API_SECRET
-	apiSecret := os.Getenv("API_SECRET")
-	hasher := sha1.New()
-	hasher.Write([]byte(apiSecret))
-	cfg.APISecretHash = hex.EncodeToString(hasher.Sum(nil))
-	cfg.DefaultRole = os.Getenv("DEFAULT_ROLE")
-	if cfg.DefaultRole == "" {
-		cfg.DefaultRole = "readable"
-	}
-
-	logLevel, ok := logLevels[strings.ToLower(os.Getenv("LOG_LEVEL"))]
-	if !ok {
-		logLevel = slog.LevelInfo
-	}
-	cfg.LogLevel = logLevel
-
-	return cfg, nil
-}
-
 func main() {
-	cfg, err := loadEnvConfig()
+	var cfg config.ServerConfig
+	err := cfg.RegisterEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -79,6 +42,18 @@ func main() {
 	}
 }
 
+//https: //github.com/thanos-io/objstore/blob/main/providers/s3
+
+// NewBucketClient creates a new S3 bucket client
+//func NewBucketClient(cfg Config, name string, logger log.Logger) (objstore.Bucket, error) {
+//	s3Cfg, err := newS3Config(cfg)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	return s3.NewBucketWithConfig(logger, s3Cfg, name, nil)
+//}
+
 func run(ctx context.Context, cfg config.ServerConfig) error {
 	log := slogctx.FromCtx(ctx)
 
@@ -92,6 +67,18 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	err = pg.Ping(ctx)
 	if err != nil {
 		log.Error("run cannot ping db", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	b, err := bucketstore.New(cfg.S3Config)
+	if err != nil {
+		log.Error("run cannot configure s3 storage", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	err = b.Ping(ctx)
+	if err != nil {
+		log.Error("run cannot ping s3 storage", slog.Any("error", err))
 		os.Exit(1)
 	}
 

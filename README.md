@@ -12,6 +12,20 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] support [MacOS menu bar](https://github.com/adamd9/Nightscout-MacOS-Menu-Bar) (nb: only supports https)
  - [X] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
 
+## Usefully deployable
+ - [ ] Use in-memory data store
+   - [ ] add to memory store when new entries received
+   - [ ] read from memory store when returning current entry
+   - [ ] use memory store if possible for `entries` (ie >count entries in memory)
+ - [ ] Persist to s3 on shutdown
+ - [ ] Read from s3 on startup
+ - [ ] Persist to s3 every 15m
+ - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+
+##  Next Steps
+ - [ ] serve bundled front-end
+ - [ ] implement socket interface for f/e. See https://github.com/socketio/engine.io-protocol/tree/v3
+
 ## Discoveries:
 - v1 api has at least four different ways to authenticate
 - various api endpoints essentially expose mongodb queries directly - mapping
@@ -65,4 +79,12 @@ nightguard ios app fetches much more info :)
 "/api/v2/properties?"
 "/api/v1/treatments?find%5BeventType%5D=Site%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
 "/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23&find%5BeventType%5D=Sensor%20Change"
+```
+
+[https://github.com/AndyLow91/nightscout-data-transfer](Nightscout pro data transfer tool)
+```
+GET /api/v1/entries.json?count=all&find[dateString][$lte]=2024-11-20&find[dateString][$gte]=2024-07-01
+GET /api/v1/treatments.json?count=all&find[created_at][$lte]=2024-11-20&find[created_at][$gte]=2024-07-01
+POST /api/v1/entries
+POST /api/v1/treatments
 ```

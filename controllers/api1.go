@@ -103,9 +103,9 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		SgvMgdl:    entry.SgvMgdl,
 		Direction:  entry.Direction,
 		Device:     entry.Device,
-		Date:       entry.CreatedTime.UnixMilli(),
-		Mills:      entry.CreatedTime.UnixMilli(),
-		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		Date:       entry.Time.UnixMilli(),
+		Mills:      entry.Time.UnixMilli(),
+		DateString: entry.Time.Format("2006-01-02T15:04:05.000Z"),
 		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
 		UtcOffset:  0,
 	}
@@ -198,6 +198,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+
 	a.renderEntryList(w, r, entries)
 
 }

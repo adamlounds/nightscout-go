@@ -5,6 +5,7 @@ import (
 	"fmt"
 	kitlog "github.com/go-kit/log"
 	"github.com/thanos-io/objstore/providers/s3"
+	"io"
 	"net/http"
 	"os"
 )
@@ -32,4 +33,12 @@ func (b *BucketStore) Close() {}
 func (b *BucketStore) Ping(ctx context.Context) error {
 	_, err := b.Bucket.Exists(ctx, "ping")
 	return err
+}
+
+func (b *BucketStore) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	return b.Bucket.Get(ctx, name)
+}
+
+func (b *BucketStore) Upload(ctx context.Context, name string, r io.Reader) error {
+	return b.Bucket.Upload(ctx, name, r)
 }

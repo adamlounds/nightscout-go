@@ -83,7 +83,7 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	}
 
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
-	entryRepository := repository.NewPostgresEntryRepository(pg)
+	entryRepository := repository.NewPostgresEntryRepository(pg, b)
 
 	authService := &models.AuthService{authRepository}
 

@@ -13,8 +13,8 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
 
 ## Usefully deployable
- - [ ] Use in-memory data store
-   - [ ] add to memory store when new entries received
+ - [X] Use in-memory data store
+   - [X] add to memory store when new entries received
    - [ ] read from memory store when returning current entry
    - [ ] use memory store if possible for `entries` (ie >count entries in memory)
  - [ ] Persist to s3 on shutdown
@@ -35,6 +35,8 @@ Feasibility study to see if Go-based nightscout would be useful.
   `devicestatus-upload` permission does not allow `nightscout-librelink-up` to
   work as it fetches from `/api/v1/entries?count=1` to determine the most-recent
   sgv before uploading new ones
+- nightscout will return the most-recent-before-current-time entry for the
+  `current` apiv1 endpoint, not the max-time entry
 
 
 ### Known-used Endpoints

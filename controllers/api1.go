@@ -18,7 +18,7 @@ import (
 
 type EntryRepository interface {
 	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
-	FetchLatestEntry(ctx context.Context) (*models.Entry, error)
+	FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error)
 	FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error)
 	CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error)
 }
@@ -87,7 +87,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
-	entry, err := a.FetchLatestEntry(ctx)
+	entry, err := a.FetchLatestSgvEntry(ctx)
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -157,9 +157,9 @@ var directionIDByName = map[string]directionID{
 type entryTypeID uint8
 
 const (
-	mbg entryTypeID = 0
-	sgv entryTypeID = 1
-	cal entryTypeID = 2
+	mbg entryTypeID = 1
+	sgv entryTypeID = 2
+	cal entryTypeID = 3
 )
 
 var entryTypeIDByName = map[string]entryTypeID{
@@ -238,9 +238,15 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 			}
 			reqEntry.Date = entryTime.Format("2006-01-02T15:04:05.000Z")
 		}
+		_, ok := entryTypeIDByName[reqEntry.Type]
+		if !ok {
+			log.Info("unknown type", slog.String("type", reqEntry.Type))
+			http.Error(w, "invalid type", http.StatusBadRequest)
+			return
+		}
 
 		entries = append(entries, models.Entry{
-			Type:        "sgv",
+			Type:        reqEntry.Type,
 			SgvMgdl:     reqEntry.SgvMgdl,
 			Direction:   reqEntry.Direction,
 			Time:        entryTime,

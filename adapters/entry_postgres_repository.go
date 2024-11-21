@@ -82,38 +82,44 @@ func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string
 	return &entry, nil
 }
 
-func (p PostgresEntryRepository) FetchLatestEntry(ctx context.Context) (*models.Entry, error) {
-	var entry models.Entry
+func (p PostgresEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error) {
+	var e models.Entry
 
-	// WIP
-	// NB: should it ignore future entries?
-	if len(p.memStore.entries) > 1 {
-		lastEntry := p.memStore.entries[len(p.memStore.entries)-1]
+	// nb (unexpected?) future entries are excluded
+	now := time.Now()
+	for i := len(p.memStore.entries) - 1; i >= 0; i-- {
+		e := p.memStore.entries[i]
+		if e.Type != "sgv" {
+			continue
+		}
+		if e.EventTime.After(now) {
+			continue
+		}
 		return &models.Entry{
-			ID:          lastEntry.ID,
-			Oid:         lastEntry.Oid,
-			Type:        lastEntry.Type,
-			SgvMgdl:     lastEntry.SgvMgdl,
-			Direction:   lastEntry.Trend,
-			Device:      p.memStore.deviceNamesByID[lastEntry.DeviceID],
-			Time:        lastEntry.EventTime,
-			CreatedTime: lastEntry.CreatedTime,
+			ID:          e.ID,
+			Oid:         e.Oid,
+			Type:        e.Type,
+			SgvMgdl:     e.SgvMgdl,
+			Direction:   e.Trend,
+			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Time:        e.EventTime,
+			CreatedTime: e.CreatedTime,
 		}, nil
 	}
 
-	row := p.DB.QueryRow(ctx, `SELECT
-	e.id, e.oid, e.type, e.sgv_mgdl, e.trend, d.name, e.entry_time, e.created_time
+	row := p.DB.QueryRow(ctx,
+		`SELECT e.id, e.oid, e.type, e.sgv_mgdl, e.trend, d.name, e.entry_time, e.created_time
 	FROM entry e, device d 
 	WHERE e.device_id = d.id
 	ORDER BY created_time DESC LIMIT 1`)
-	err := row.Scan(&entry.ID, &entry.Oid, &entry.Type, &entry.SgvMgdl, &entry.Direction, &entry.Device, &entry.Time, &entry.CreatedTime)
+	err := row.Scan(&e.ID, &e.Oid, &e.Type, &e.SgvMgdl, &e.Direction, &e.Device, &e.Time, &e.CreatedTime)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, models.ErrNotFound
 		}
-		return nil, fmt.Errorf("pg FetchLatestEntry: %w", err)
+		return nil, fmt.Errorf("pg FetchLatestSgvEntry: %w", err)
 	}
-	return &entry, nil
+	return &e, nil
 }
 
 func (p PostgresEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error) {

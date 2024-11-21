@@ -12,6 +12,10 @@ import (
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"os/signal"
+	"syscall"
+	"time"
+
 	//"github.com/thanos-io/objstore/providers/s3"
 	"log/slog"
 	"net/http"
@@ -36,10 +40,7 @@ func main() {
 	slog.SetDefault(log.With(slog.Int("pid", os.Getpid())))
 	ctx := slogctx.NewCtx(context.Background(), slog.Default())
 
-	err = run(ctx, cfg)
-	if err != nil {
-		panic(err)
-	}
+	run(ctx, cfg)
 }
 
 //https: //github.com/thanos-io/objstore/blob/main/providers/s3
@@ -54,7 +55,7 @@ func main() {
 //	return s3.NewBucketWithConfig(logger, s3Cfg, name, nil)
 //}
 
-func run(ctx context.Context, cfg config.ServerConfig) error {
+func run(ctx context.Context, cfg config.ServerConfig) {
 	log := slogctx.FromCtx(ctx)
 
 	pg, err := postgres.New(cfg.PSQL)
@@ -85,9 +86,7 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
 	entryRepository := repository.NewPostgresEntryRepository(pg, b)
 
-	authService := &models.AuthService{authRepository}
-
-	// /api/v1/entries?count=60&token=ffs-358de43470f328f3
+	authService := &models.AuthService{AuthRepository: authRepository}
 
 	apiV1C := controllers.ApiV1{
 		EntryRepository: entryRepository,
@@ -105,12 +104,11 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		r.Use(middleware.URLFormat)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
 		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries", apiV1C.CreateEntries)
-		//r.With(apiV1mw.SetAuthentication).Get("/entries/", apiV1C.ListEntries)
 		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.Get("/entries/current", apiV1C.LatestEntry)
 	})
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		entry, err := entryRepository.FetchLatestEntry(r.Context())
+		entry, err := entryRepository.FetchLatestSgvEntry(r.Context())
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -120,8 +118,37 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%#v", entry)))
+		w.Write([]byte(fmt.Sprintf("%#v", entry))) //nolint:errcheck
 	})
+
+	// TODO look at how to prevent shutdown if s3 writes are in-progress?
+	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
+	serverCtx, serverStopCtx := context.WithCancel(ctx)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-sig
+		shutdownCtx, _ := context.WithTimeout(serverCtx, time.Second*10) //nolint:govet
+		go func() {
+			<-shutdownCtx.Done()
+			if errors.Is(shutdownCtx.Err(), context.DeadlineExceeded) {
+				log.Error("graceful shutdown timed out, forcing exit")
+			}
+		}()
+
+		err := server.Shutdown(shutdownCtx)
+		if err != nil {
+			log.Error("cannot shutdown server", slog.Any("error", err))
+		}
+		serverStopCtx()
+	}()
+
 	log.Info("Starting server on", "address", cfg.Server.Address)
-	return http.ListenAndServe(cfg.Server.Address, r)
+	err = server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("server terminated", slog.Any("error", err))
+	}
+	log.Info("shutdown ok")
+	<-serverCtx.Done()
 }

@@ -26,7 +26,7 @@ func (m mockEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*
 	return m.fetchByOidFn(ctx, oid)
 }
 
-func (m mockEntryRepository) FetchLatestEntry(ctx context.Context) (*models.Entry, error) {
+func (m mockEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error) {
 	return m.fetchLatestFn(ctx)
 }
 

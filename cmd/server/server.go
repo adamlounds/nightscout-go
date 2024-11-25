@@ -12,6 +12,7 @@ import (
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	_ "net/http/pprof"
 	"os/signal"
 	"syscall"
 	"time"
@@ -86,6 +87,11 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
 	entryRepository := repository.NewPostgresEntryRepository(pg, b)
 
+	err = entryRepository.Boot(ctx)
+	if err != nil {
+		log.Error("run cannot fetch entries", slog.Any("error", err))
+	}
+
 	authService := &models.AuthService{AuthRepository: authRepository}
 
 	apiV1C := controllers.ApiV1{
@@ -107,6 +113,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.Get("/entries/current", apiV1C.LatestEntry)
 	})
+	r.Mount("/debug", middleware.Profiler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		entry, err := entryRepository.FetchLatestSgvEntry(r.Context())
 		if err != nil {

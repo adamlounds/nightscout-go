@@ -13,14 +13,19 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
 
 ## Usefully deployable
- - [X] Use in-memory data store
+
+- [X] Use in-memory data store. Remove postgres.
+      Do not fix >11k entry pg import issue (caused by too-long sql statement)
    - [X] add to memory store when new entries received
+     - [X] flush current day-file
+     - [ ] Detect day boundary & write previous-day's month-file if passed
    - [ ] read from memory store when returning current entry
    - [ ] use memory store if possible for `entries` (ie >count entries in memory)
- - [ ] Persist to s3 on shutdown
+ - [X] Persist to s3 on shutdown (not needed, s3 is always up-to-date with latest data)
  - [ ] Read from s3 on startup
  - [ ] Persist to s3 every 15m
  - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+ - [ ] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
 
 ##  Next Steps
  - [ ] serve bundled front-end
@@ -89,4 +94,21 @@ GET /api/v1/entries.json?count=all&find[dateString][$lte]=2024-11-20&find[dateSt
 GET /api/v1/treatments.json?count=all&find[created_at][$lte]=2024-11-20&find[created_at][$gte]=2024-07-01
 POST /api/v1/entries
 POST /api/v1/treatments
+```
+
+[https://www.juggluco.nl/Juggluco/webserver.html](Juggluco) says it implements a nightscout-compatible server.
+```
+GET /api/v1/entries/sgv.json
+GET /api/v1/entries.json
+GET /api/v1/entries/sgv.csv
+GET /api/v1/entries/sgv.tsv or http://127.0.0.1:17580/api/v1/entries/sgv.txt or http://127.0.0.1:17580/api/v1/entries
+GET /api/v1/entries/current
+GET /api/v1/treatments
+
+supports count and find:
+find[date][$gt]=datemsec
+find[date][$gte]=datemsec
+find[date][$lt]=datemsec
+find[date][$lte]=datemsec
+/api/v1/entries.json?count=5&find[dateString][$lt]=2023-03-02T08:04:01
 ```

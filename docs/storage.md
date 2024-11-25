@@ -65,7 +65,8 @@ At minimum, you will need to provide a value for the `bucket`, `endpoint`,
 
 Object storage is designed with the following requirements in mind:
 - New entries normally result in a single write
-- We can accommodate future entries (expected bug when entries are later than today (UTC))
+- Future entries are not supported and have undefined behaviour
+  - (for now, write them to "today" file)
 - Startup should not have to load a large number of files
 - Unexpected files should not cause issues
   - We should not have to enumerate/iterate files in storage
@@ -98,8 +99,10 @@ With that in mind, we have the following storage types:
 
 ### Write algorithm
 
-When new events are received
-1. If all events are within the current day, update the current-day file
+When new events are received:
+
+1. If all events are within the current day (technically, after 00:00 this
+   morning - should include future entries), update the current-day file
 2. If we pass into a new day, write a completed, backup version of the previous
    day. Write a new version of the current-month file containing all entries
    this month, except for events occurring today.
@@ -108,6 +111,22 @@ When new events are received
    entries this year, except for events occurring this month.
 4. If we pass into a new year, write a completed, backup version of the
    previous year.
+
+Note: "current" day/month/year is based on system time, not entry time.
+
+Rationale for writing completed backup files: the backup files should have
+a degree of usefulness, otherwise there's no point in keeping them.
+Most of the time, the previous-day backup will be unchanged, as entries tend to
+come in one-by-one from a sensor (so 2024-11-01.json will _already_ contain
+everything from that day, the next reading will go into 2024-11-02.json).
+However, without consideration, the month file would never contain entries from
+the last day of the month.
+For example on 2024-11-30, the month file contains 2024-11-01 to 2024-11-29, but
+on the next day we'd be using 2024-12.json as the current-month file.
+Similarly, the year files would never contain entries for December.
+
+Caveat: Backup files are not considered canonical.
+Bulk imports are not expected to populate all the relevant backup files.
 
 When historical events are received
 1. if event occurred today, set the "current-day" dirty flag.
@@ -123,6 +142,7 @@ When historical events are received
 Re-write the appropriate files.
 
 ### Read algorithm (boot)
+
   - load last year's completed year-file (so we have some history on jan 1st)
   - load the current year-file
   - load the current month-file.

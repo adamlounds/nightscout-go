@@ -27,26 +27,25 @@ type device struct {
 }
 
 type entry struct {
-	ID          int       `json:"id"`
+	EventTime   time.Time `json:"event_time" db:"entry_time"`
+	CreatedTime time.Time `json:"created_time"`
 	Oid         string    `json:"oid"`
 	Type        string    `json:"type"`
-	SgvMgdl     int       `json:"sgv_mgdl"`
 	Trend       string    `json:"trend"`
+	SgvMgdl     int       `json:"sgv_mgdl"`
+	ID          int       `json:"id"`
 	DeviceID    int       `json:"device_id"`
-	EventTime   time.Time `json:"event_time"`
-	CreatedTime time.Time `json:"created_time"`
 }
 
 type memStore struct {
+	deviceNamesByID     map[int]string
+	dirtyYears          map[int]struct{} // new entry outside of this month: update year file
 	entries             []entry
 	entriesLock         sync.Mutex
-	deviceNamesByID     map[int]string
 	deviceNamesByIDLock sync.Mutex
-	entriesNeedSorting  bool
-	dirtyDay            bool             // new entry today = update day file
-	dirtyMonth          bool             // new entry this month (but not today): update month
-	dirtyYears          map[int]struct{} // new entry outside of this month: update year file
 	dirtyLock           sync.Mutex
+	dirtyDay            bool // new entry today = update day file
+	dirtyMonth          bool // new entry this month (but not today): update month
 }
 
 type PostgresEntryRepository struct {
@@ -61,6 +60,92 @@ func NewPostgresEntryRepository(pgstore *pgstore.PostgresStore, b *bucketstore.B
 		dirtyYears:      make(map[int]struct{}),
 	}
 	return &PostgresEntryRepository{pgstore, b, m}
+}
+
+// Boot fetches common data into memory, typically at server startup
+func (p PostgresEntryRepository) Boot(ctx context.Context) error {
+	log := slogctx.FromCtx(ctx)
+
+	now := time.Now()
+	entryFiles := map[string]string{
+		"day":      fmt.Sprintf("ns-day/%s.json", now.Format("2006-01-02")),
+		"month":    fmt.Sprintf("ns-month/%s.json", now.Format("2006-01")),
+		"year":     fmt.Sprintf("ns-year/%d.json", now.Year()),
+		"prevYear": fmt.Sprintf("ns-year/%d.json", now.Year()-1),
+	}
+
+	for name, file := range entryFiles {
+		err := p.fetchEntries(ctx, file)
+		if err != nil {
+			if p.Bucket.IsObjNotFoundErr(err) {
+				log.Debug("boot: cannot find file (not written yet?)",
+					slog.String("name", name),
+					slog.String("file", file),
+				)
+				continue
+			}
+			if p.Bucket.IsAccessDeniedErr(err) {
+				log.Warn("boot: cannot fetch file - ACCESS DENIED",
+					slog.String("name", name),
+					slog.String("file", file),
+					slog.Any("err", err),
+				)
+				continue
+			}
+			log.Debug("boot: cannot fetch file",
+				slog.String("name", name),
+				slog.String("file", file),
+				slog.Any("err", err),
+			)
+		}
+	}
+
+	return nil
+}
+
+func (p PostgresEntryRepository) fetchEntries(ctx context.Context, file string) error {
+	log := slogctx.FromCtx(ctx)
+	t1 := time.Now()
+	r, err := p.Get(ctx, file)
+	log.Debug("fetched from s3",
+		slog.String("file", file),
+		slog.Int64("duration_ms", time.Since(t1).Milliseconds()),
+	)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	var result []storedEntry
+	err = json.NewDecoder(r).Decode(&result)
+	if err != nil {
+		return err
+	}
+
+	// repository.storedEntry{repository.storedEntry{Oid:"673f0b9c2d9a23bffdc4a2cb",
+	// Type:"sgv", SgvMgdl:107, Direction:"Flat", Device:"nightscout-librelink-up",
+	// Time:time.Date(2024, time.November, 21, 10, 29, 48, 0, time.UTC),
+	// CreatedTime:time.Date(2024, time.November, 21, 12, 18, 24, 942444000, time.UTC)}}
+
+	deviceIDsByName, err := p.deviceIDsByName(ctx)
+	if err != nil {
+		return err
+	}
+	p.memStore.entriesLock.Lock()
+	defer p.memStore.entriesLock.Unlock()
+	for _, e := range result {
+		deviceID := deviceIDsByName[e.Device] // 0 for unknown
+		p.memStore.entries = append(p.memStore.entries, entry{
+			EventTime:   e.Time,
+			CreatedTime: e.CreatedTime,
+			Oid:         e.Oid,
+			Type:        e.Type,
+			Trend:       e.Direction,
+			SgvMgdl:     e.SgvMgdl,
+			DeviceID:    deviceID,
+		})
+	}
+	return nil
 }
 
 func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
@@ -215,13 +300,13 @@ func (p PostgresEntryRepository) InsertMissingDevices(ctx context.Context, entri
 }
 
 type storedEntry struct {
-	Oid         string    `json:"_id"`
-	Type        string    `json:"type"`
-	SgvMgdl     int       `json:"sgv"`
-	Direction   string    `json:"direction"`
-	Device      string    `json:"device"`
 	Time        time.Time `json:"dateString"`
 	CreatedTime time.Time `json:"sysTime"`
+	Oid         string    `json:"_id"`
+	Type        string    `json:"type"`
+	Direction   string    `json:"direction"`
+	Device      string    `json:"device"`
+	SgvMgdl     int       `json:"sgv"`
 }
 
 // TODO: Events in the far future should end up in day file?
@@ -242,12 +327,16 @@ func (p PostgresEntryRepository) syncToBucket(ctx context.Context, currentTime t
 		slog.Any("dirtyYears", p.memStore.dirtyYears),
 	)
 
+	p.memStore.dirtyLock.Lock()
+	defer p.memStore.dirtyLock.Unlock()
 	p.syncDayToBucket(ctx, currentTime)
+	p.memStore.dirtyDay = false
 	p.syncMonthToBucket(ctx, currentTime)
+	p.memStore.dirtyMonth = false
 	p.syncYearsToBucket(ctx, currentTime)
 }
 
-// syncMonthToBucket updates the day file in the object store.
+// syncDayToBucket updates the day file in the object store.
 // day files contain data for the current day
 func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTime time.Time) {
 	log := slogctx.FromCtx(ctx)
@@ -260,44 +349,41 @@ func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTim
 	)
 
 	var dayEntries []storedEntry
-	currentYear := currentTime.Year()
-	currentMonth := currentTime.Month()
-	currentDay := currentTime.Day()
+	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, time.UTC)
 	for _, entry := range p.memStore.entries {
-		if entry.EventTime.Year() != currentYear {
-			continue
-		}
-		if entry.EventTime.Month() != currentMonth {
-			continue
-		}
-		if entry.EventTime.Day() != currentDay {
+		if entry.EventTime.Before(startOfDay) {
 			continue
 		}
 		dayEntries = append(dayEntries, storedEntry{
-			entry.Oid,
-			entry.Type,
-			entry.SgvMgdl,
-			entry.Trend,
-			p.memStore.deviceNamesByID[entry.DeviceID],
-			entry.EventTime,
-			entry.CreatedTime,
+			Oid:         entry.Oid,
+			Type:        entry.Type,
+			SgvMgdl:     entry.SgvMgdl,
+			Direction:   entry.Trend,
+			Device:      p.memStore.deviceNamesByID[entry.DeviceID],
+			Time:        entry.EventTime,
+			CreatedTime: entry.CreatedTime,
 		})
 	}
 
-	b, err := json.Marshal(dayEntries)
+	name := fmt.Sprintf("ns-day/%s.json", currentTime.Format("2006-01-02"))
+	p.writeEntriesToBucket(ctx, name, dayEntries)
+}
+
+func (p PostgresEntryRepository) writeEntriesToBucket(ctx context.Context, name string, storedEntries []storedEntry) {
+	log := slogctx.FromCtx(ctx)
+	b, err := json.Marshal(storedEntries)
 	if err != nil {
-		log.Warn("cannot marshal day entries", slog.Any("err", err))
+		log.Warn("cannot marshal entries", slog.String("name", name), slog.Any("err", err))
 		return
 	}
 
 	r := bytes.NewReader(b)
-	name := "dayfile.json"
 	err = p.Upload(ctx, name, r)
 	if err != nil {
-		log.Warn("cannot upload day entries", slog.Any("err", err))
+		log.Warn("cannot upload entries", slog.String("name", name), slog.Any("err", err))
+		return
 	}
-	slog.Debug("uploaded day file", slog.String("name", name), slog.Int("size", len(b)))
-
+	slog.Debug("uploaded entries", slog.String("name", name), slog.Int("size", len(b)))
 }
 
 // syncMonthToBucket updates a month file in the object store.
@@ -311,23 +397,29 @@ func (p PostgresEntryRepository) syncMonthToBucket(ctx context.Context, currentT
 		slog.Time("time", currentTime),
 		slog.Bool("dirtyMonth", p.memStore.dirtyMonth),
 	)
-	var monthEntries []entry
-	currentYear := currentTime.Year()
-	currentMonth := currentTime.Month()
-	currentDay := currentTime.Day()
+	var monthEntries []storedEntry
+	startOfMonth := time.Date(currentTime.Year(), currentTime.Month(), 1, 0, 0, 0, 0, time.UTC)
+	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, time.UTC)
 	for _, entry := range p.memStore.entries {
-		if entry.EventTime.Year() != currentYear {
-			continue
-		}
-		if entry.EventTime.Month() != currentMonth {
+		if entry.EventTime.Before(startOfMonth) {
 			continue
 		}
 		// month files do not include today's data
-		if entry.EventTime.Day() == currentDay {
+		if entry.EventTime.After(startOfDay) {
 			continue
 		}
-		monthEntries = append(monthEntries, entry)
+		monthEntries = append(monthEntries, storedEntry{
+			Oid:         entry.Oid,
+			Type:        entry.Type,
+			SgvMgdl:     entry.SgvMgdl,
+			Direction:   entry.Trend,
+			Device:      p.memStore.deviceNamesByID[entry.DeviceID],
+			Time:        entry.EventTime,
+			CreatedTime: entry.CreatedTime,
+		})
 	}
+	name := fmt.Sprintf("ns-month/%s.json", currentTime.Format("2006-01"))
+	p.writeEntriesToBucket(ctx, name, monthEntries)
 }
 
 // syncMonthToBucket updates a year file in the object store.
@@ -346,28 +438,29 @@ func (p PostgresEntryRepository) syncYearsToBucket(ctx context.Context, currentT
 	// and fetch data if it's for a year we don't already have in memory
 
 	// for now, work on current year only?
-	yearsEntries := make(map[int][]entry)
-	currentYear := currentTime.Year()
-	currentMonth := currentTime.Month()
-	currentDay := currentTime.Day()
+	yearsEntries := make(map[int][]storedEntry)
+	startOfYear := time.Date(currentTime.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	startOfMonth := time.Date(currentTime.Year(), currentTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 	for _, e := range p.memStore.entries {
-		if e.EventTime.Year() == currentYear {
-			if e.EventTime.Month() == currentMonth {
-				// current "year" files do not include this month's data
-				continue
-			}
-		}
-		// month files do not include today's data
-		if e.EventTime.Day() == currentDay {
+		if e.EventTime.Before(startOfYear) {
 			continue
 		}
-		_, ok := yearsEntries[e.EventTime.Year()]
-		if !ok {
-			yearsEntries[e.EventTime.Year()] = []entry{}
+		// year files do not include data for current month
+		if e.EventTime.After(startOfMonth) {
 			continue
 		}
-		yearsEntries[e.EventTime.Year()] = append(yearsEntries[e.EventTime.Year()], e)
+		yearsEntries[e.EventTime.Year()] = append(yearsEntries[e.EventTime.Year()], storedEntry{
+			Oid:         e.Oid,
+			Type:        e.Type,
+			SgvMgdl:     e.SgvMgdl,
+			Direction:   e.Trend,
+			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Time:        e.EventTime,
+			CreatedTime: e.CreatedTime,
+		})
 	}
+	name := fmt.Sprintf("ns-year/%s.json", currentTime.Format("2006"))
+	p.writeEntriesToBucket(ctx, name, yearsEntries[currentTime.Year()])
 }
 
 // CreateEntries supports adding new entries to the db.
@@ -396,7 +489,7 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 		for _, entry := range entries {
 			if entry.Time.Before(lastEventTime) {
 				// potential dupe
-				log.Info("potential dupe", slog.Time("evt", entry.Time), slog.Time("lastEvent", lastEventTime))
+				//log.Info("potential dupe", slog.Time("evt", entry.Time), slog.Time("lastEvent", lastEventTime))
 			}
 		}
 	}
@@ -439,7 +532,7 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 		return nil, fmt.Errorf("pg CreateEntries cannot insert: %w", err)
 	}
 
-	insertedEntries, err := pgx.CollectRows(rows, pgx.RowToStructByPos[entry])
+	insertedEntries, err := pgx.CollectRows(rows, pgx.RowToStructByName[entry])
 	if err != nil {
 		return nil, fmt.Errorf("pg CreateEntries cannot get inserted rows: %w", err)
 	}
@@ -489,10 +582,10 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 		} else {
 			p.memStore.dirtyYears[insertedEntry.EventTime.Year()] = struct{}{}
 		}
-		log.Info("inserted entry", "numEntries", len(p.memStore.entries))
 
 		lastEventTime = insertedEntry.EventTime
 	}
+	log.Info("inserted entries", slog.Int("totalEntries", len(p.memStore.entries)), slog.Int("numInserted", len(insertedEntries)))
 
 	if entriesNeedSorting {
 		t1 := time.Now()

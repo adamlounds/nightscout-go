@@ -42,3 +42,11 @@ func (b *BucketStore) Get(ctx context.Context, name string) (io.ReadCloser, erro
 func (b *BucketStore) Upload(ctx context.Context, name string, r io.Reader) error {
 	return b.Bucket.Upload(ctx, name, r)
 }
+
+func (b *BucketStore) IsAccessDeniedErr(err error) bool {
+	return b.Bucket.IsAccessDeniedErr(err)
+}
+
+func (b *BucketStore) IsObjNotFoundErr(err error) bool {
+	return b.Bucket.IsObjNotFoundErr(err)
+}

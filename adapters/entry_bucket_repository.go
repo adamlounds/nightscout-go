@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
-	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
 	slogctx "github.com/veqryn/slog-context"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"io"
 	"log/slog"
 	"slices"
 	"sync"
@@ -24,7 +24,7 @@ import (
 // current: time (8bytes) + oid string ( 24 + 16 header = 40 bytes) = 48 bytes
 // proposed: time (8 bytes) + oid counter (4 bytes) = 12 bytes
 // type enum(4) and trend (enum 10) should be uint8 or smaller.
-type entry struct {
+type memEntry struct {
 	EventTime   time.Time
 	CreatedTime time.Time
 	Oid         string
@@ -37,21 +37,28 @@ type entry struct {
 type memStore struct {
 	deviceNames     []string
 	deviceIDsByName map[string]int
-	dirtyYears      map[int]struct{} // new entry outside of this month: update year file
-	entries         []entry
+	dirtyYears      map[int]struct{} // new memEntry outside of this month: update year file
+	entries         []memEntry
 	entriesLock     sync.Mutex
 	deviceNamesLock sync.Mutex
 	dirtyLock       sync.Mutex
-	dirtyDay        bool // new entry today = update day file
-	dirtyMonth      bool // new entry this month (but not today): update month
+	dirtyDay        bool // new memEntry today = update day file
+	dirtyMonth      bool // new memEntry this month (but not today): update month
+}
+
+type BucketStoreInterface interface {
+	Get(ctx context.Context, file string) (io.ReadCloser, error)
+	Upload(ctx context.Context, name string, r io.Reader) error
+	IsObjNotFoundErr(err error) bool
+	IsAccessDeniedErr(err error) bool
 }
 
 type BucketEntryRepository struct {
-	*bucketstore.BucketStore
-	memStore *memStore
+	BucketStore BucketStoreInterface
+	memStore    *memStore
 }
 
-func NewBucketEntryRepository(bs *bucketstore.BucketStore) *BucketEntryRepository {
+func NewBucketEntryRepository(bs BucketStoreInterface) *BucketEntryRepository {
 	m := &memStore{
 		deviceNames: []string{"unknown"},
 		deviceIDsByName: map[string]int{
@@ -78,14 +85,14 @@ func (p BucketEntryRepository) Boot(ctx context.Context) error {
 	for name, file := range entryFiles {
 		err := p.fetchEntries(ctx, file)
 		if err != nil {
-			if p.Bucket.IsObjNotFoundErr(err) {
+			if p.BucketStore.IsObjNotFoundErr(err) {
 				log.Debug("boot: cannot find file (not written yet?)",
 					slog.String("name", name),
 					slog.String("file", file),
 				)
 				continue
 			}
-			if p.Bucket.IsAccessDeniedErr(err) {
+			if p.BucketStore.IsAccessDeniedErr(err) {
 				log.Warn("boot: cannot fetch file - ACCESS DENIED",
 					slog.String("name", name),
 					slog.String("file", file),
@@ -109,7 +116,7 @@ func (p BucketEntryRepository) Boot(ctx context.Context) error {
 func (p BucketEntryRepository) fetchEntries(ctx context.Context, file string) error {
 	log := slogctx.FromCtx(ctx)
 	t1 := time.Now()
-	r, err := p.Get(ctx, file)
+	r, err := p.BucketStore.Get(ctx, file)
 	log.Debug("fetched from s3",
 		slog.String("file", file),
 		slog.Int64("duration_ms", time.Since(t1).Milliseconds()),
@@ -141,7 +148,7 @@ func (p BucketEntryRepository) fetchEntries(ctx context.Context, file string) er
 			p.memStore.deviceNames = append(p.memStore.deviceNames, e.Device)
 			p.memStore.deviceIDsByName[e.Device] = deviceID
 		}
-		p.memStore.entries = append(p.memStore.entries, entry{
+		p.memStore.entries = append(p.memStore.entries, memEntry{
 			EventTime:   e.Time,
 			CreatedTime: e.CreatedTime,
 			Oid:         e.Oid,
@@ -309,7 +316,7 @@ func (p BucketEntryRepository) writeEntriesToBucket(ctx context.Context, name st
 	}
 
 	r := bytes.NewReader(b)
-	err = p.Upload(ctx, name, r)
+	err = p.BucketStore.Upload(ctx, name, r)
 	if err != nil {
 		log.Warn("cannot upload entries", slog.String("name", name), slog.Any("err", err))
 		return
@@ -408,7 +415,7 @@ func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []mode
 	now := time.Now()
 
 	// TODO de-dupe. We want to support bulk-import, maybe 250k entries (6mo),
-	// so naive scan-all-existing-entries for each new entry may be bad
+	// so naive scan-all-existing-entries for each new memEntry may be bad
 	if len(p.memStore.entries) > 0 {
 		lastEntry := p.memStore.entries[len(p.memStore.entries)-1]
 		// events within 10 seconds of each other should be checked for dupes
@@ -453,7 +460,7 @@ func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []mode
 			oid = primitive.NewObjectIDFromTimestamp(now).Hex()
 		}
 
-		memEntry := entry{
+		memEntry := memEntry{
 			Oid:         oid,
 			Type:        e.Type,
 			SgvMgdl:     e.SgvMgdl,
@@ -506,7 +513,7 @@ func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []mode
 
 	if entriesNeedSorting {
 		t1 := time.Now()
-		slices.SortFunc(p.memStore.entries, func(a, b entry) int { return a.EventTime.Compare(b.EventTime) })
+		slices.SortFunc(p.memStore.entries, func(a, b memEntry) int { return a.EventTime.Compare(b.EventTime) })
 		log.Debug("entries sorted", slog.Int64("duration_us", time.Since(t1).Microseconds()))
 	}
 

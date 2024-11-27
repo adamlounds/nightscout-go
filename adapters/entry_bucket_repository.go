@@ -7,22 +7,13 @@ import (
 	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
 	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
-	pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
-	"github.com/jackc/pgx/v5"
 	slogctx "github.com/veqryn/slog-context"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
-
-type device struct {
-	ID          int
-	Name        string
-	CreatedTime time.Time
-}
 
 // TODO look at optimising in-memory usage. There is overlap between Oid
 // and createdTime, and we probably don't need to store ns-resolution for
@@ -34,51 +25,54 @@ type device struct {
 // proposed: time (8 bytes) + oid counter (4 bytes) = 12 bytes
 // type enum(4) and trend (enum 10) should be uint8 or smaller.
 type entry struct {
-	EventTime   time.Time `json:"event_time" db:"entry_time"`
-	CreatedTime time.Time `json:"created_time"`
-	Oid         string    `json:"oid"`
-	Type        string    `json:"type"`
-	Trend       string    `json:"trend"`
-	SgvMgdl     int       `json:"sgv_mgdl"`
-	ID          int       `json:"id"`
-	DeviceID    int       `json:"device_id"`
+	EventTime   time.Time
+	CreatedTime time.Time
+	Oid         string
+	Type        string
+	Trend       string
+	SgvMgdl     int
+	DeviceID    int
 }
 
 type memStore struct {
-	deviceNamesByID     map[int]string
-	dirtyYears          map[int]struct{} // new entry outside of this month: update year file
-	entries             []entry
-	entriesLock         sync.Mutex
-	deviceNamesByIDLock sync.Mutex
-	dirtyLock           sync.Mutex
-	dirtyDay            bool // new entry today = update day file
-	dirtyMonth          bool // new entry this month (but not today): update month
+	deviceNames     []string
+	deviceIDsByName map[string]int
+	dirtyYears      map[int]struct{} // new entry outside of this month: update year file
+	entries         []entry
+	entriesLock     sync.Mutex
+	deviceNamesLock sync.Mutex
+	dirtyLock       sync.Mutex
+	dirtyDay        bool // new entry today = update day file
+	dirtyMonth      bool // new entry this month (but not today): update month
 }
 
-type PostgresEntryRepository struct {
-	*pgstore.PostgresStore
+type BucketEntryRepository struct {
 	*bucketstore.BucketStore
 	memStore *memStore
 }
 
-func NewPostgresEntryRepository(pgstore *pgstore.PostgresStore, b *bucketstore.BucketStore) *PostgresEntryRepository {
+func NewBucketEntryRepository(bs *bucketstore.BucketStore) *BucketEntryRepository {
 	m := &memStore{
-		deviceNamesByID: make(map[int]string),
-		dirtyYears:      make(map[int]struct{}),
+		deviceNames: []string{"unknown"},
+		deviceIDsByName: map[string]int{
+			"unknown": 0,
+		},
+		dirtyYears: make(map[int]struct{}),
 	}
-	return &PostgresEntryRepository{pgstore, b, m}
+	return &BucketEntryRepository{bs, m}
 }
 
 // Boot fetches common data into memory, typically at server startup
-func (p PostgresEntryRepository) Boot(ctx context.Context) error {
+func (p BucketEntryRepository) Boot(ctx context.Context) error {
 	log := slogctx.FromCtx(ctx)
 
+	// loading files in order means we don't have to sort afterwards.
 	now := time.Now()
 	entryFiles := map[string]string{
-		"day":      fmt.Sprintf("ns-day/%s.json", now.Format("2006-01-02")),
-		"month":    fmt.Sprintf("ns-month/%s.json", now.Format("2006-01")),
-		"year":     fmt.Sprintf("ns-year/%d.json", now.Year()),
 		"prevYear": fmt.Sprintf("ns-year/%d.json", now.Year()-1),
+		"year":     fmt.Sprintf("ns-year/%d.json", now.Year()),
+		"month":    fmt.Sprintf("ns-month/%s.json", now.Format("2006-01")),
+		"day":      fmt.Sprintf("ns-day/%s.json", now.Format("2006-01-02")),
 	}
 
 	for name, file := range entryFiles {
@@ -112,7 +106,7 @@ func (p PostgresEntryRepository) Boot(ctx context.Context) error {
 	return nil
 }
 
-func (p PostgresEntryRepository) fetchEntries(ctx context.Context, file string) error {
+func (p BucketEntryRepository) fetchEntries(ctx context.Context, file string) error {
 	log := slogctx.FromCtx(ctx)
 	t1 := time.Now()
 	r, err := p.Get(ctx, file)
@@ -136,14 +130,17 @@ func (p PostgresEntryRepository) fetchEntries(ctx context.Context, file string) 
 	// Time:time.Date(2024, time.November, 21, 10, 29, 48, 0, time.UTC),
 	// CreatedTime:time.Date(2024, time.November, 21, 12, 18, 24, 942444000, time.UTC)}}
 
-	deviceIDsByName, err := p.deviceIDsByName(ctx)
-	if err != nil {
-		return err
-	}
 	p.memStore.entriesLock.Lock()
 	defer p.memStore.entriesLock.Unlock()
+	p.memStore.deviceNamesLock.Lock()
+	defer p.memStore.deviceNamesLock.Unlock()
 	for _, e := range result {
-		deviceID := deviceIDsByName[e.Device] // 0 for unknown
+		deviceID, ok := p.memStore.deviceIDsByName[e.Device]
+		if !ok {
+			deviceID = len(p.memStore.deviceIDsByName)
+			p.memStore.deviceNames = append(p.memStore.deviceNames, e.Device)
+			p.memStore.deviceIDsByName[e.Device] = deviceID
+		}
 		p.memStore.entries = append(p.memStore.entries, entry{
 			EventTime:   e.Time,
 			CreatedTime: e.CreatedTime,
@@ -157,7 +154,7 @@ func (p PostgresEntryRepository) fetchEntries(ctx context.Context, file string) 
 	return nil
 }
 
-func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
+func (p BucketEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
 
 	for i := len(p.memStore.entries) - 1; i >= 0; i-- {
 		e := p.memStore.entries[i]
@@ -165,12 +162,11 @@ func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string
 			continue
 		}
 		return &models.Entry{
-			ID:          e.ID,
 			Oid:         e.Oid,
 			Type:        e.Type,
 			SgvMgdl:     e.SgvMgdl,
 			Direction:   e.Trend,
-			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Device:      p.memStore.deviceNames[e.DeviceID],
 			Time:        e.EventTime,
 			CreatedTime: e.CreatedTime,
 		}, nil
@@ -178,7 +174,7 @@ func (p PostgresEntryRepository) FetchEntryByOid(ctx context.Context, oid string
 	return nil, models.ErrNotFound
 }
 
-func (p PostgresEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error) {
+func (p BucketEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error) {
 
 	// nb (unexpected?) future entries are excluded
 	now := time.Now()
@@ -191,12 +187,11 @@ func (p PostgresEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*mode
 			continue
 		}
 		return &models.Entry{
-			ID:          e.ID,
 			Oid:         e.Oid,
 			Type:        e.Type,
 			SgvMgdl:     e.SgvMgdl,
 			Direction:   e.Trend,
-			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Device:      p.memStore.deviceNames[e.DeviceID],
 			Time:        e.EventTime,
 			CreatedTime: e.CreatedTime,
 		}, nil
@@ -205,7 +200,7 @@ func (p PostgresEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*mode
 	return nil, models.ErrNotFound
 }
 
-func (p PostgresEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+func (p BucketEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error) {
 
 	// nb (unexpected?) future entries are excluded
 	now := time.Now()
@@ -221,7 +216,7 @@ func (p PostgresEntryRepository) FetchLatestEntries(ctx context.Context, maxEntr
 			Type:        e.Type,
 			SgvMgdl:     e.SgvMgdl,
 			Direction:   e.Trend,
-			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Device:      p.memStore.deviceNames[e.DeviceID],
 			Time:        e.EventTime,
 			CreatedTime: e.CreatedTime,
 		})
@@ -230,82 +225,6 @@ func (p PostgresEntryRepository) FetchLatestEntries(ctx context.Context, maxEntr
 		}
 	}
 	return entries, nil
-}
-
-func (p PostgresEntryRepository) FetchAllDevices(ctx context.Context) ([]device, error) {
-	rows, err := p.DB.Query(ctx, `SELECT id, name, created_time from device`)
-	if err != nil {
-		return nil, fmt.Errorf("pg FetchAllDevices: %w", err)
-	}
-	devices, err := pgx.CollectRows(rows, pgx.RowToStructByPos[device])
-	if err != nil {
-		return nil, fmt.Errorf("pg FetchAllDevices collect: %w", err)
-	}
-
-	p.memStore.deviceNamesByIDLock.Lock()
-	defer p.memStore.deviceNamesByIDLock.Unlock()
-	clear(p.memStore.deviceNamesByID)
-	for _, device := range devices {
-		p.memStore.deviceNamesByID[device.ID] = device.Name
-	}
-
-	return devices, nil
-}
-
-func (p PostgresEntryRepository) deviceIDsByName(ctx context.Context) (map[string]int, error) {
-	devices, err := p.FetchAllDevices(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("pg deviceIDsByName cannot fetch devices: %w", err)
-	}
-	deviceIDsByName := make(map[string]int, len(devices))
-	for _, device := range devices {
-		deviceIDsByName[device.Name] = device.ID
-	}
-	return deviceIDsByName, nil
-}
-
-func (p PostgresEntryRepository) InsertMissingDevices(ctx context.Context, entries []models.Entry) (map[string]int, error) {
-	knownDevices, err := p.deviceIDsByName(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("pg InsertMissingDevices cannot fetch device ids: %w", err)
-	}
-
-	var devicesToAdd []string
-	for _, entry := range entries {
-		_, ok := knownDevices[entry.Device]
-		if !ok {
-			devicesToAdd = append(devicesToAdd, entry.Device)
-		}
-	}
-
-	if len(devicesToAdd) == 0 {
-		return knownDevices, nil
-	}
-
-	// Support multiple inserts via a single SQL query
-	placeholders := make([]string, len(devicesToAdd))
-	valueArgs := make([]interface{}, len(devicesToAdd))
-	for i, deviceName := range devicesToAdd {
-		placeholders[i] = fmt.Sprintf("($%d)", i+1)
-		valueArgs[i] = deviceName
-	}
-
-	query := fmt.Sprintf("INSERT INTO device (name) VALUES %s ON CONFLICT (name) DO NOTHING RETURNING *;",
-		strings.Join(placeholders, ","))
-	rows, err := p.DB.Query(ctx, query, valueArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("pg InsertMissingDevices cannot insert: %w", err)
-	}
-
-	insertedDevices, err := pgx.CollectRows(rows, pgx.RowToStructByPos[device])
-	if err != nil {
-		return nil, fmt.Errorf("pg InsertMissingDevices cannot get inserted rows: %w", err)
-	}
-	for _, insertedDevice := range insertedDevices {
-		knownDevices[insertedDevice.Name] = insertedDevice.ID
-	}
-
-	return knownDevices, nil
 }
 
 type storedEntry struct {
@@ -327,7 +246,7 @@ type storedEntry struct {
 // and at startup read four files (previous year, this year, this month, today).
 // Data older than the previous year can be fetched on demand (?)
 // They are designed such that reading those files will not have any duplicate/overlapping entries
-func (p PostgresEntryRepository) syncToBucket(ctx context.Context, currentTime time.Time) {
+func (p BucketEntryRepository) syncToBucket(ctx context.Context, currentTime time.Time) {
 	log := slogctx.FromCtx(ctx)
 	log.Debug("syncing",
 		slog.Time("time", currentTime),
@@ -348,7 +267,7 @@ func (p PostgresEntryRepository) syncToBucket(ctx context.Context, currentTime t
 
 // syncDayToBucket updates the day file in the object store.
 // day files contain data for the current day
-func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTime time.Time) {
+func (p BucketEntryRepository) syncDayToBucket(ctx context.Context, currentTime time.Time) {
 	log := slogctx.FromCtx(ctx)
 	if !p.memStore.dirtyDay {
 		return
@@ -361,7 +280,7 @@ func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTim
 	var dayEntries []storedEntry
 	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, time.UTC)
 
-	// TODO: array is sorted: we can use binary search to find start of day & write everything after that.
+	// TODO:  p.memStore.entries is sorted: we can use binary search to find start of day & write everything after that.
 	for _, entry := range p.memStore.entries {
 		if entry.EventTime.Before(startOfDay) {
 			continue
@@ -371,7 +290,7 @@ func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTim
 			Type:        entry.Type,
 			SgvMgdl:     entry.SgvMgdl,
 			Direction:   entry.Trend,
-			Device:      p.memStore.deviceNamesByID[entry.DeviceID],
+			Device:      p.memStore.deviceNames[entry.DeviceID],
 			Time:        entry.EventTime,
 			CreatedTime: entry.CreatedTime,
 		})
@@ -381,7 +300,7 @@ func (p PostgresEntryRepository) syncDayToBucket(ctx context.Context, currentTim
 	p.writeEntriesToBucket(ctx, name, dayEntries)
 }
 
-func (p PostgresEntryRepository) writeEntriesToBucket(ctx context.Context, name string, storedEntries []storedEntry) {
+func (p BucketEntryRepository) writeEntriesToBucket(ctx context.Context, name string, storedEntries []storedEntry) {
 	log := slogctx.FromCtx(ctx)
 	b, err := json.Marshal(storedEntries)
 	if err != nil {
@@ -395,12 +314,16 @@ func (p PostgresEntryRepository) writeEntriesToBucket(ctx context.Context, name 
 		log.Warn("cannot upload entries", slog.String("name", name), slog.Any("err", err))
 		return
 	}
-	slog.Debug("uploaded entries", slog.String("name", name), slog.Int("size", len(b)))
+	slog.Debug("uploaded entries",
+		slog.String("name", name),
+		slog.Int("byteSize", len(b)),
+		slog.Int("numEntries", len(storedEntries)),
+	)
 }
 
 // syncMonthToBucket updates a month file in the object store.
 // month files contain data for the current month, excluding today
-func (p PostgresEntryRepository) syncMonthToBucket(ctx context.Context, currentTime time.Time) {
+func (p BucketEntryRepository) syncMonthToBucket(ctx context.Context, currentTime time.Time) {
 	log := slogctx.FromCtx(ctx)
 	if !p.memStore.dirtyMonth {
 		return
@@ -425,7 +348,7 @@ func (p PostgresEntryRepository) syncMonthToBucket(ctx context.Context, currentT
 			Type:        entry.Type,
 			SgvMgdl:     entry.SgvMgdl,
 			Direction:   entry.Trend,
-			Device:      p.memStore.deviceNamesByID[entry.DeviceID],
+			Device:      p.memStore.deviceNames[entry.DeviceID],
 			Time:        entry.EventTime,
 			CreatedTime: entry.CreatedTime,
 		})
@@ -436,8 +359,8 @@ func (p PostgresEntryRepository) syncMonthToBucket(ctx context.Context, currentT
 
 // syncMonthToBucket updates a year file in the object store.
 // previous year files contain all data for that year.
-// the current year file contain data for the current year, excluding this month.
-func (p PostgresEntryRepository) syncYearsToBucket(ctx context.Context, currentTime time.Time) {
+// the current year-file contains data for the current year, excluding this month.
+func (p BucketEntryRepository) syncYearsToBucket(ctx context.Context, currentTime time.Time) {
 	log := slogctx.FromCtx(ctx)
 	if len(p.memStore.dirtyYears) == 0 {
 		return
@@ -466,7 +389,7 @@ func (p PostgresEntryRepository) syncYearsToBucket(ctx context.Context, currentT
 			Type:        e.Type,
 			SgvMgdl:     e.SgvMgdl,
 			Direction:   e.Trend,
-			Device:      p.memStore.deviceNamesByID[e.DeviceID],
+			Device:      p.memStore.deviceNames[e.DeviceID],
 			Time:        e.EventTime,
 			CreatedTime: e.CreatedTime,
 		})
@@ -476,7 +399,7 @@ func (p PostgresEntryRepository) syncYearsToBucket(ctx context.Context, currentT
 }
 
 // CreateEntries supports adding new entries to the db.
-func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error) {
+func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error) {
 	var modelEntries []models.Entry
 	if len(entries) == 0 {
 		return modelEntries, nil
@@ -484,25 +407,16 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 	log := slogctx.FromCtx(ctx)
 	now := time.Now()
 
-	knownDevices, err := p.InsertMissingDevices(ctx, entries)
-	if err != nil {
-		return nil, fmt.Errorf("cannot insert missing devices: %w", err)
-	}
-	deviceNamesByID := make(map[int]string, len(knownDevices))
-	for deviceName, deviceID := range knownDevices {
-		deviceNamesByID[deviceID] = deviceName
-	}
-
 	// TODO de-dupe. We want to support bulk-import, maybe 250k entries (6mo),
 	// so naive scan-all-existing-entries for each new entry may be bad
 	if len(p.memStore.entries) > 0 {
 		lastEntry := p.memStore.entries[len(p.memStore.entries)-1]
-		// events within 10s should be checked for dupes
+		// events within 10 seconds of each other should be checked for dupes
 		lastEventTime := lastEntry.EventTime.Add(time.Second * 10)
 		for _, entry := range entries {
-			if entry.Time.Before(lastEventTime) {
+			if !entry.Time.After(lastEventTime) {
 				// potential dupe
-				//log.Info("potential dupe", slog.Time("evt", entry.Time), slog.Time("lastEvent", lastEventTime))
+				log.Info("potential dupe", slog.Time("evt", entry.Time), slog.Time("lastEvent", lastEventTime))
 			}
 		}
 	}
@@ -519,12 +433,17 @@ func (p PostgresEntryRepository) CreateEntries(ctx context.Context, entries []mo
 		lastEventTime = p.memStore.entries[len(p.memStore.entries)-1].EventTime
 	}
 
+	p.memStore.deviceNamesLock.Lock()
+	defer p.memStore.deviceNamesLock.Unlock()
+
 	entriesNeedSorting := false
 	for _, e := range entries {
 
-		deviceID, ok := knownDevices[e.Device]
+		deviceID, ok := p.memStore.deviceIDsByName[e.Device]
 		if !ok {
-			return nil, fmt.Errorf("pg CreateEntries cannot find device for %s", e.Device)
+			deviceID = len(p.memStore.deviceIDsByName)
+			p.memStore.deviceNames = append(p.memStore.deviceNames, e.Device)
+			p.memStore.deviceIDsByName[e.Device] = deviceID
 		}
 
 		// Preserve oid on import.

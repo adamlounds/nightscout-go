@@ -53,6 +53,8 @@ type APIV1EntryRequest struct {
 	SgvMgdl   int    `json:"sgv"`
 }
 
+var rfc3339msLayout = "2006-01-02T15:04:05.000Z"
+
 func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
 	ctx := r.Context()
@@ -76,8 +78,8 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 		Device:     entry.Device,
 		Date:       entry.CreatedTime.UnixMilli(),
 		Mills:      entry.CreatedTime.UnixMilli(),
-		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		DateString: entry.CreatedTime.Format(rfc3339msLayout),
+		SysTime:    entry.CreatedTime.Format(rfc3339msLayout),
 		UtcOffset:  0,
 	}
 	render.JSON(w, r, responseEntry)
@@ -105,8 +107,8 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		Device:     entry.Device,
 		Date:       entry.Time.UnixMilli(),
 		Mills:      entry.Time.UnixMilli(),
-		DateString: entry.Time.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		DateString: entry.Time.Format(rfc3339msLayout),
+		SysTime:    entry.CreatedTime.Format(rfc3339msLayout),
 		UtcOffset:  0,
 	}
 	render.JSON(w, r, responseEntry)
@@ -236,7 +238,7 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "invalid date format", http.StatusBadRequest)
 				return
 			}
-			reqEntry.Date = entryTime.Format("2006-01-02T15:04:05.000Z")
+			reqEntry.Date = entryTime.Format(rfc3339msLayout)
 		}
 		_, ok := entryTypeIDByName[reqEntry.Type]
 		if !ok {
@@ -282,8 +284,8 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 				Device:     entry.Device,
 				Date:       entry.Time.UnixMilli(),
 				Mills:      entry.Time.UnixMilli(),
-				DateString: entry.Time.Format("2006-01-02T15:04:05.000Z"),
-				SysTime:    entry.Time.Format("2006-01-02T15:04:05.000Z"),
+				DateString: entry.Time.Format(rfc3339msLayout),
+				SysTime:    entry.Time.Format(rfc3339msLayout),
 				UtcOffset:  0,
 			})
 		}
@@ -304,7 +306,7 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 			direction = fmt.Sprintf(`"%s"`, entry.Direction)
 		}
 		parts := []string{
-			fmt.Sprintf(`"%s"`, entry.Time.Format("2006-01-02T15:04:05.000Z")),
+			fmt.Sprintf(`"%s"`, entry.Time.Format(rfc3339msLayout)),
 			strconv.FormatInt(entry.Time.UnixMilli(), 10),
 			strconv.Itoa(entry.SgvMgdl),
 			direction,

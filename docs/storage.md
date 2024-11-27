@@ -77,23 +77,23 @@ Object storage is designed with the following requirements in mind:
 
 With that in mind, we have the following storage types:
 
-#### Archived year files
- - no retention rules
- - Contain a year's worth of events
- - Should never need updating
+#### Archived year-files
+ - ...have no retention rules
+ - ...contain a year's worth of events
+ - ...should never need updating
 
-#### Current year file
+#### Current year-file
   - no retention rule
   - Contain data for "completed" months
-  - Typically updated monthly at start of new month
+  - Typically updated monthly at the start of a new month
 
-#### Current month file
-  - 18 month retention (Can rebuild current year, plus 6mo leeway)
+#### Current month-file
+  - 18-month retention (Can rebuild current year, plus 6-month leeway)
   - Contain data for "completed" days within this month
-  - Typically updated daily at start of new day
+  - Typically updated daily at the start of a new day
 
-#### Current day file
-  - 7 month retention (can rebuild current month, plus 6mo leeway)
+#### Current day-file
+  - 7-month retention (can rebuild current month, plus 6-month leeway)
   - Contain data for the current day
   - Typically updated when new events are received
 

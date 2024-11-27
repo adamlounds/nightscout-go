@@ -12,18 +12,14 @@ import (
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
+	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
-
-	//"github.com/thanos-io/objstore/providers/s3"
-	"log/slog"
-	"net/http"
-	"os"
-
-	slogctx "github.com/veqryn/slog-context"
-	//"github.com/thanos-io/objstore/providers/s3"
 )
 
 func main() {
@@ -44,18 +40,6 @@ func main() {
 	run(ctx, cfg)
 }
 
-//https: //github.com/thanos-io/objstore/blob/main/providers/s3
-
-// NewBucketClient creates a new S3 bucket client
-//func NewBucketClient(cfg Config, name string, logger log.Logger) (objstore.Bucket, error) {
-//	s3Cfg, err := newS3Config(cfg)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return s3.NewBucketWithConfig(logger, s3Cfg, name, nil)
-//}
-
 func run(ctx context.Context, cfg config.ServerConfig) {
 	log := slogctx.FromCtx(ctx)
 
@@ -72,20 +56,20 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		os.Exit(1)
 	}
 
-	b, err := bucketstore.New(cfg.S3Config)
+	bs, err := bucketstore.New(cfg.S3Config)
 	if err != nil {
 		log.Error("run cannot configure s3 storage", slog.Any("error", err))
 		os.Exit(1)
 	}
 
-	err = b.Ping(ctx)
+	err = bs.Ping(ctx)
 	if err != nil {
 		log.Error("run cannot ping s3 storage", slog.Any("error", err))
 		os.Exit(1)
 	}
 
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
-	entryRepository := repository.NewPostgresEntryRepository(pg, b)
+	entryRepository := repository.NewBucketEntryRepository(bs)
 
 	err = entryRepository.Boot(ctx)
 	if err != nil {
@@ -125,7 +109,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%#v", entry))) //nolint:errcheck
+		_, _ = w.Write([]byte(fmt.Sprintf("%#v", entry))) //nolint:errcheck
 	})
 
 	// TODO look at how to prevent shutdown if s3 writes are in-progress?

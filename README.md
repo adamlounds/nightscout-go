@@ -17,16 +17,15 @@ Feasibility study to see if Go-based nightscout would be useful.
 - [X] Use in-memory data store. Remove postgres.
       Do not fix >11k entry pg import issue (caused by too-long sql statement)
    - [X] add to memory store when new entries received
-     - [X] flush current day-file
-     - [X] Detect day boundary & write previous-day's month-file if passed
-     - [X] Write year-files as appropriate
+     - [X] Write current day-, month- and year- files as appropriate
    - [X] read from memory store when returning current entry
    - [X] use memory store if possible for `entries` (ie >count entries in memory)
  - [X] Persist to s3 on shutdown (not needed, s3 is always up-to-date with latest data)
  - [X] Read from s3 on startup
- - [X] ~~Persist to s3 every 15m~~ (every receipt of new data)
- - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+ - [X] Trigger write to s3 on each receipt of new data
  - [X] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
+ - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+ - [ ] Write completed "backup" files when passing into new month/year
 
 ##  Next Steps
  - [ ] serve bundled front-end

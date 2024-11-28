@@ -15,6 +15,22 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+var now = time.Date(2024, 11, 28, 10, 0, 0, 0, time.UTC)
+var recent = time.Date(2024, 11, 28, 9, 30, 0, 0, time.UTC)
+var future = time.Date(2024, 11, 28, 11, 0, 0, 0, time.UTC)
+var sameDay = time.Date(2024, 11, 28, 0, 0, 0, 0, time.UTC)
+var sameMonth = time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
+var sameYear = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+var lastYear = time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+
+var nonSgvEntry = memEntry{Oid: "non-sgv", Type: "mbg", SgvMgdl: 98, DeviceID: 0, EventTime: recent, CreatedTime: now}
+var recentEntry = memEntry{Oid: "latest", Type: "sgv", SgvMgdl: 98, Trend: "DoubleUp", DeviceID: 0, EventTime: recent, CreatedTime: now}
+var futureEntry = memEntry{Oid: "future", Type: "sgv", SgvMgdl: 99, Trend: "FortyFiveUp", DeviceID: 0, EventTime: future, CreatedTime: now}
+var sameDayEntry = memEntry{Oid: "older", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: sameDay, CreatedTime: now}
+var sameMonthEntry = memEntry{Oid: "samemonth", Type: "sgv", SgvMgdl: 101, Trend: "SingleUp", DeviceID: 2, EventTime: sameMonth, CreatedTime: now}
+var sameYearEntry = memEntry{Oid: "sameyear", Type: "sgv", SgvMgdl: 102, Trend: "Flat", DeviceID: 1, EventTime: sameYear, CreatedTime: now}
+var lastYearEntry = memEntry{Oid: "lastyear", Type: "sgv", SgvMgdl: 103, Trend: "SingleDown", DeviceID: 0, EventTime: lastYear, CreatedTime: now}
+
 // MockBucketStore is a mock implementation of the BucketStore interface
 type MockBucketStore struct {
 	mock.Mock
@@ -50,6 +66,23 @@ func TestNewBucketEntryRepository(t *testing.T) {
 	assert.NotNil(t, repo)
 	assert.Equal(t, mockStore, repo.BucketStore)
 	assert.NotNil(t, repo.memStore)
+}
+
+func TestFetchEntries(t *testing.T) {
+	mockStore := &MockBucketStore{}
+	repo := NewBucketEntryRepository(mockStore)
+	dayEntries := `[{"dateString":"2024-11-27T11:50:21.723Z","sysTime":"2024-11-27T11:56:16.158187Z","_id":"674708e0575df739a9711a40","type":"sgv","direction":"Flat","device":"G6 Native / G5 Native","sgv":105}]`
+	mockStore.On("Get", mock.Anything, "ns-day/2024-11-27").Return(io.NopCloser(strings.NewReader(dayEntries)), nil)
+
+	err := repo.fetchEntries(contextWithSilentLogger(), "ns-day/2024-11-27")
+
+	mockStore.AssertExpectations(t)
+	memEntries := repo.memStore.entries
+	assert.NoError(t, err)
+	assert.Len(t, memEntries, 1)
+	assert.Len(t, repo.memStore.deviceNames, 2) // device Name has been detected & added to id list
+	assert.Equal(t, "sgv", memEntries[0].Type)
+	assert.Equal(t, 105, memEntries[0].SgvMgdl)
 }
 
 // TestFetchEntryByOid tests fetching an memEntry by Oid
@@ -92,6 +125,7 @@ func TestFetchEntryByOid(t *testing.T) {
 	nonExistentOid := "non-existent-oid"
 	fetchedEntry, err = repo.FetchEntryByOid(contextWithSilentLogger(), nonExistentOid)
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, models.ErrNotFound)
 	assert.Nil(t, fetchedEntry)
 }
 
@@ -100,54 +134,46 @@ func TestFetchLatestSgvEntry(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
 
-	now := time.Now()
 	repo.memStore.entries = []memEntry{
-		{Oid: "older", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now.Add(-time.Hour), CreatedTime: now},
-		{Oid: "latest", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: now.Add(-time.Minute), CreatedTime: now},
-		{Oid: "non-sgv", Type: "mbg", SgvMgdl: 99, DeviceID: 0, EventTime: now.Add(-time.Minute), CreatedTime: now},
-		{Oid: "future", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: now.Add(time.Minute), CreatedTime: now},
+		sameDayEntry,
+		recentEntry,
+		{Oid: "non-sgv", Type: "mbg", SgvMgdl: 99, DeviceID: 0, EventTime: recent, CreatedTime: now},
+		futureEntry,
 	}
 
-	fetchedEntry, err := repo.FetchLatestSgvEntry(contextWithSilentLogger())
+	fetchedEntry, err := repo.FetchLatestSgvEntry(contextWithSilentLogger(), now)
 	assert.NoError(t, err)
 	assert.Equal(t, "latest", fetchedEntry.Oid)
 
 	repo.memStore.entries = []memEntry{
-		{Oid: "non-sgv", Type: "mbg", SgvMgdl: 99, DeviceID: 0, EventTime: now.Add(-time.Minute), CreatedTime: now},
+		{Oid: "non-sgv", Type: "mbg", SgvMgdl: 99, DeviceID: 0, EventTime: recent, CreatedTime: now},
 	}
-	fetchedEntry, err = repo.FetchLatestSgvEntry(contextWithSilentLogger())
+	fetchedEntry, err = repo.FetchLatestSgvEntry(contextWithSilentLogger(), now)
 	assert.Error(t, err)
 }
 
-// TestFetchLatestEntries tests fetching the latest entries
 func TestFetchLatestEntries(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
 
-	now := time.Now()
 	repo.memStore.entries = []memEntry{
-		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now.Add(-time.Hour), CreatedTime: now},
-		{Oid: "oid2", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: now.Add(-time.Minute), CreatedTime: now},
-		{Oid: "future", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: now.Add(time.Minute), CreatedTime: now},
+		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: sameDay, CreatedTime: now},
+		{Oid: "oid2", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: recent, CreatedTime: now},
+		{Oid: "future", Type: "sgv", SgvMgdl: 150, Trend: "Up", DeviceID: 0, EventTime: future, CreatedTime: now},
 	}
 
-	entries, err := repo.FetchLatestEntries(contextWithSilentLogger(), 1)
+	entries, err := repo.FetchLatestEntries(contextWithSilentLogger(), now, 1)
 	assert.NoError(t, err)
 	assert.Len(t, entries, 1)
 	assert.Equal(t, "oid2", entries[0].Oid)
 }
 
-// TestCreateEntries tests the creation of new entries
-func TestCreateEntries(t *testing.T) {
+func TestAddEntriesToMemStore(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
 
-	// ensure spawned goroutine can sync/upload
-	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
 	// calling with no entries does not error
-	createdEntries, err := repo.CreateEntries(contextWithSilentLogger(), []models.Entry{})
-	assert.NoError(t, err)
+	createdEntries := repo.addEntriesToMemStore(contextWithSilentLogger(), now, []models.Entry{})
 	assert.Equal(t, len(createdEntries), 0)
 
 	entries := []models.Entry{
@@ -155,7 +181,7 @@ func TestCreateEntries(t *testing.T) {
 			SgvMgdl:   100,
 			Direction: "Flat",
 			Device:    "test-device-1",
-			Time:      time.Now().Add(-time.Second),
+			Time:      recent,
 		},
 		{
 			Oid:       "old-oid",
@@ -163,14 +189,13 @@ func TestCreateEntries(t *testing.T) {
 			SgvMgdl:   150,
 			Direction: "Up",
 			Device:    "test-device-2",
-			Time:      time.Now().Add(-time.Minute),
+			Time:      sameDay,
 		},
 	}
 
-	createdEntries, err = repo.CreateEntries(contextWithSilentLogger(), entries)
+	createdEntries = repo.addEntriesToMemStore(contextWithSilentLogger(), now, entries)
 
 	// entries returned in the same order as they were passed
-	assert.NoError(t, err)
 	assert.Equal(t, len(entries), len(createdEntries))
 	assert.NotEqual(t, createdEntries[0].Oid, "", "entry is assigned an Oid")
 	assert.Equal(t, createdEntries[1].Oid, "old-oid")
@@ -184,17 +209,72 @@ func TestCreateEntries(t *testing.T) {
 	assert.Equal(t, repo.memStore.entries[1].Type, "sgv", "unknown Type assumed to be sgv")
 }
 
+func TestAddEntriesToMemStoreDirtyDetection(t *testing.T) {
+	mockStore := &MockBucketStore{}
+	repo := NewBucketEntryRepository(mockStore)
+	repo.memStore.entries = []memEntry{
+		{Oid: "older", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: sameDay, CreatedTime: now},
+	}
+
+	// calling with no entries leaves everything clean
+	createdEntries := repo.addEntriesToMemStore(contextWithSilentLogger(), now, []models.Entry{})
+	assert.Equal(t, len(createdEntries), 0)
+	assert.False(t, repo.memStore.dirtyDay)
+	assert.False(t, repo.memStore.dirtyMonth)
+	assert.Zero(t, len(repo.memStore.dirtyYears))
+
+	todayEntries := []models.Entry{
+		{SgvMgdl: 120, Time: recent},
+		{SgvMgdl: 121, Time: future},
+		{SgvMgdl: 122, Time: sameDay},
+	}
+
+	createdEntries = repo.addEntriesToMemStore(contextWithSilentLogger(), now, todayEntries)
+
+	assert.Equal(t, len(createdEntries), 3)
+	assert.Len(t, repo.memStore.entries, 4) // including the original entry
+	assert.True(t, repo.memStore.dirtyDay)
+	assert.False(t, repo.memStore.dirtyMonth)
+	assert.Zero(t, len(repo.memStore.dirtyYears))
+
+	repo.memStore.dirtyDay = false
+	thisMonthEntries := []models.Entry{
+		{SgvMgdl: 130, Time: sameDay.Add(-time.Second)},
+		{SgvMgdl: 131, Time: sameMonth},
+	}
+
+	createdEntries = repo.addEntriesToMemStore(contextWithSilentLogger(), now, thisMonthEntries)
+
+	assert.Equal(t, len(createdEntries), 2)
+	assert.Len(t, repo.memStore.entries, 6)
+	assert.False(t, repo.memStore.dirtyDay)
+	assert.True(t, repo.memStore.dirtyMonth)
+	assert.Zero(t, len(repo.memStore.dirtyYears))
+
+	repo.memStore.dirtyMonth = false
+	thisYearEntries := []models.Entry{
+		{SgvMgdl: 140, Time: sameMonth.Add(-time.Second)},
+		{SgvMgdl: 141, Time: sameYear},
+		{SgvMgdl: 142, Time: lastYear},
+	}
+
+	createdEntries = repo.addEntriesToMemStore(contextWithSilentLogger(), now, thisYearEntries)
+
+	assert.Equal(t, len(createdEntries), 3)
+	assert.Len(t, repo.memStore.entries, 9)
+	assert.False(t, repo.memStore.dirtyDay)
+	assert.False(t, repo.memStore.dirtyMonth)
+	assert.Exactly(t, 2, len(repo.memStore.dirtyYears))
+	assert.Contains(t, repo.memStore.dirtyYears, 2024)
+	assert.Contains(t, repo.memStore.dirtyYears, 2023)
+}
+
 // TestSyncToBucket tests the various day/month/year sync functions
 func TestSyncToBucket(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
 	repo.memStore.deviceNames = []string{"unknown", "device1", "device2", "device3", "device4"}
 
-	now := time.Date(2024, 11, 28, 10, 0, 0, 0, time.UTC)
-	sameDay := time.Date(2024, 11, 28, 0, 0, 0, 0, time.UTC)
-	sameMonth := time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
-	sameYear := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	lastYear := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
 	repo.memStore.entries = []memEntry{
 		{Oid: "sameday", Type: "sgv", SgvMgdl: 100, Trend: "DoubleUp", DeviceID: 3, EventTime: sameDay, CreatedTime: now},
 		{Oid: "samemonth", Type: "sgv", SgvMgdl: 101, Trend: "SingleUp", DeviceID: 2, EventTime: sameMonth, CreatedTime: now},
@@ -248,21 +328,4 @@ func TestSyncToBucket(t *testing.T) {
 	repo.syncToBucket(contextWithSilentLogger(), now)
 
 	mockStore.AssertExpectations(t)
-}
-
-func TestFetchEntries(t *testing.T) {
-	mockStore := &MockBucketStore{}
-	repo := NewBucketEntryRepository(mockStore)
-	dayEntries := `[{"dateString":"2024-11-27T11:50:21.723Z","sysTime":"2024-11-27T11:56:16.158187Z","_id":"674708e0575df739a9711a40","type":"sgv","direction":"Flat","device":"G6 Native / G5 Native","sgv":105}]`
-	mockStore.On("Get", mock.Anything, "ns-day/2024-11-27").Return(io.NopCloser(strings.NewReader(dayEntries)), nil)
-
-	err := repo.fetchEntries(contextWithSilentLogger(), "ns-day/2024-11-27")
-
-	mockStore.AssertExpectations(t)
-	memEntries := repo.memStore.entries
-	assert.NoError(t, err)
-	assert.Len(t, memEntries, 1)
-	assert.Len(t, repo.memStore.deviceNames, 2) // device Name has been detected & added to id list
-	assert.Equal(t, "sgv", memEntries[0].Type)
-	assert.Equal(t, 105, memEntries[0].SgvMgdl)
 }

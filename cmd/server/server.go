@@ -99,7 +99,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	})
 	r.Mount("/debug", middleware.Profiler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		entry, err := entryRepository.FetchLatestSgvEntry(r.Context())
+		entry, err := entryRepository.FetchLatestSgvEntry(r.Context(), time.Now())
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)

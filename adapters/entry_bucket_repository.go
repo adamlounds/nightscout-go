@@ -181,16 +181,15 @@ func (p BucketEntryRepository) FetchEntryByOid(ctx context.Context, oid string) 
 	return nil, models.ErrNotFound
 }
 
-func (p BucketEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error) {
+func (p BucketEntryRepository) FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
 
 	// nb (unexpected?) future entries are excluded
-	now := time.Now()
 	for i := len(p.memStore.entries) - 1; i >= 0; i-- {
 		e := p.memStore.entries[i]
 		if e.Type != "sgv" {
 			continue
 		}
-		if e.EventTime.After(now) {
+		if e.EventTime.After(maxTime) {
 			continue
 		}
 		return &models.Entry{
@@ -207,15 +206,14 @@ func (p BucketEntryRepository) FetchLatestSgvEntry(ctx context.Context) (*models
 	return nil, models.ErrNotFound
 }
 
-func (p BucketEntryRepository) FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error) {
+func (p BucketEntryRepository) FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error) {
 
 	// nb (unexpected?) future entries are excluded
-	now := time.Now()
 	var entries []models.Entry
 	for i := len(p.memStore.entries) - 1; i >= 0; i-- {
 		e := p.memStore.entries[i]
 
-		if e.EventTime.After(now) {
+		if e.EventTime.After(maxTime) {
 			continue
 		}
 		entries = append(entries, models.Entry{
@@ -405,14 +403,24 @@ func (p BucketEntryRepository) syncYearsToBucket(ctx context.Context, currentTim
 	p.writeEntriesToBucket(ctx, name, yearsEntries[currentTime.Year()])
 }
 
-// CreateEntries supports adding new entries to the db.
-func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error) {
+// CreateEntries supports adding new entries to the stores
+func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry {
+	now := time.Now()
+	createdEntries := p.addEntriesToMemStore(ctx, now, entries)
+
+	if p.memStore.dirtyMonth || p.memStore.dirtyDay || len(p.memStore.dirtyYears) != 0 {
+		syncContext := context.WithoutCancel(ctx)
+		go p.syncToBucket(syncContext, now)
+	}
+	return createdEntries
+}
+
+func (p BucketEntryRepository) addEntriesToMemStore(ctx context.Context, now time.Time, entries []models.Entry) []models.Entry {
 	var modelEntries []models.Entry
 	if len(entries) == 0 {
-		return modelEntries, nil
+		return modelEntries
 	}
 	log := slogctx.FromCtx(ctx)
-	now := time.Now()
 
 	// TODO de-dupe. We want to support bulk-import, maybe 250k entries (6mo),
 	// so naive scan-all-existing-entries for each new memEntry may be bad
@@ -479,12 +487,12 @@ func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []mode
 			entriesNeedSorting = true
 		}
 
-		if memEntry.EventTime.After(startOfDay) {
+		if !memEntry.EventTime.Before(startOfDay) {
 			if !p.memStore.dirtyDay {
 				p.memStore.dirtyDay = true
 				log.Info("marking day dirty", slog.Any("memEntry", memEntry))
 			}
-		} else if memEntry.EventTime.After(startOfMonth) {
+		} else if !memEntry.EventTime.Before(startOfMonth) {
 			if !p.memStore.dirtyMonth {
 				log.Info("marking month dirty", slog.Any("memEntry", memEntry))
 				p.memStore.dirtyMonth = true
@@ -517,10 +525,5 @@ func (p BucketEntryRepository) CreateEntries(ctx context.Context, entries []mode
 		log.Debug("entries sorted", slog.Int64("duration_us", time.Since(t1).Microseconds()))
 	}
 
-	if p.memStore.dirtyMonth || p.memStore.dirtyDay || len(p.memStore.dirtyYears) != 0 {
-		syncContext := context.WithoutCancel(ctx)
-		go p.syncToBucket(syncContext, now)
-	}
-
-	return modelEntries, nil
+	return modelEntries
 }

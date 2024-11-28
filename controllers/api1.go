@@ -18,9 +18,9 @@ import (
 
 type EntryRepository interface {
 	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
-	FetchLatestSgvEntry(ctx context.Context) (*models.Entry, error)
-	FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error)
-	CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error)
+	FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error)
+	FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
+	CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry
 }
 type AuthRepository interface {
 	GetAPISecretHash(ctx context.Context) string
@@ -89,7 +89,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
-	entry, err := a.FetchLatestSgvEntry(ctx)
+	entry, err := a.FetchLatestSgvEntry(ctx, time.Now())
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -194,7 +194,7 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
 		return
 	}
-	entries, err := a.FetchLatestEntries(ctx, count)
+	entries, err := a.FetchLatestEntries(ctx, time.Now(), count)
 	if err != nil {
 		log.Warn("entryService.ByID failed", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -257,12 +257,7 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	insertedEntries, err := a.EntryRepository.CreateEntries(ctx, entries)
-	if err != nil {
-		log.Warn("could not create entries", slog.Any("error", err))
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
+	insertedEntries := a.EntryRepository.CreateEntries(ctx, entries)
 
 	// NB while swagger.json says this should return the _rejected_ entries,
 	// cgm_remote_monitor returns the accepted entries

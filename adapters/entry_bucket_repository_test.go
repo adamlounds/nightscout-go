@@ -141,35 +141,46 @@ func TestCreateEntries(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
 
-	entries := []models.Entry{
-		{
-			Oid:         "test-oid-1",
-			Type:        "sgv",
-			SgvMgdl:     100,
-			Direction:   "Flat",
-			Device:      "test-device-1",
-			Time:        time.Now(),
-			CreatedTime: time.Now(),
-		},
-		{
-			Oid:         "test-oid-2",
-			Type:        "sgv",
-			SgvMgdl:     150,
-			Direction:   "Up",
-			Device:      "test-device-2",
-			Time:        time.Now(),
-			CreatedTime: time.Now(),
-		},
-	}
-
 	// ensure spawned goroutine can sync/upload
 	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	createdEntries, err := repo.CreateEntries(contextWithSilentLogger(), entries)
+	// calling with no entries does not error
+	createdEntries, err := repo.CreateEntries(contextWithSilentLogger(), []models.Entry{})
+	assert.NoError(t, err)
+	assert.Equal(t, len(createdEntries), 0)
+
+	entries := []models.Entry{
+		{
+			SgvMgdl:   100,
+			Direction: "Flat",
+			Device:    "test-device-1",
+			Time:      time.Now().Add(-time.Second),
+		},
+		{
+			Oid:       "old-oid",
+			Type:      "mbg",
+			SgvMgdl:   150,
+			Direction: "Up",
+			Device:    "test-device-2",
+			Time:      time.Now().Add(-time.Minute),
+		},
+	}
+
+	createdEntries, err = repo.CreateEntries(contextWithSilentLogger(), entries)
+
+	// entries returned in the same order as they were passed
 	assert.NoError(t, err)
 	assert.Equal(t, len(entries), len(createdEntries))
-	assert.Equal(t, entries[0].Oid, createdEntries[0].Oid)
-	assert.Equal(t, entries[1].Oid, createdEntries[1].Oid)
+	assert.NotEqual(t, createdEntries[0].Oid, "", "entry is assigned an Oid")
+	assert.Equal(t, createdEntries[1].Oid, "old-oid")
+	newOid := createdEntries[0].Oid
+
+	// memory store is kept sorted by entry time
+	assert.Len(t, repo.memStore.entries, 2)
+	assert.Equal(t, repo.memStore.entries[0].Oid, "old-oid")
+	assert.Equal(t, repo.memStore.entries[1].Oid, newOid, "memory store uses generated oid")
+	assert.True(t, repo.memStore.entries[1].EventTime.After(repo.memStore.entries[0].EventTime), "memory store keeps entries sorted by time")
+	assert.Equal(t, repo.memStore.entries[1].Type, "sgv", "unknown Type assumed to be sgv")
 }
 
 // TestSyncToBucket tests the syncToBucket method
@@ -183,8 +194,6 @@ func TestSyncToBucket(t *testing.T) {
 	}
 
 	repo.memStore.dirtyDay = true
-	repo.memStore.dirtyMonth = true
-	repo.memStore.dirtyYears = map[int]struct{}{now.Year(): {}}
 
 	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 

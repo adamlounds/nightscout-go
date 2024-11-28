@@ -2,65 +2,29 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	slogctx "github.com/veqryn/slog-context"
-	"log/slog"
-	"net/http"
-	"os"
-	"strings"
-
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/controllers"
 	"github.com/adamlounds/nightscout-go/models"
+	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
 	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
-var logLevels = map[string]slog.Level{
-	"debug": slog.LevelDebug,
-	"info":  slog.LevelInfo,
-	"warn":  slog.LevelWarn,
-	"error": slog.LevelError,
-}
-
-func loadEnvConfig() (config.ServerConfig, error) {
-	var cfg config.ServerConfig
-	cfg.PSQL = postgres.PostgresConfig{
-		Host:     os.Getenv("POSTGRES_HOST"),
-		Port:     os.Getenv("POSTGRES_PORT"),
-		User:     os.Getenv("POSTGRES_USER"),
-		Password: os.Getenv("POSTGRES_PASSWORD"),
-		Database: os.Getenv("POSTGRES_DB"),
-		SSLMode:  os.Getenv("POSTGRES_SSLMODE"),
-	}
-	cfg.Server.Address = os.Getenv("SERVER_ADDRESS")
-
-	// Create SHA1 hash of API_SECRET
-	apiSecret := os.Getenv("API_SECRET")
-	hasher := sha1.New()
-	hasher.Write([]byte(apiSecret))
-	cfg.APISecretHash = hex.EncodeToString(hasher.Sum(nil))
-	cfg.DefaultRole = os.Getenv("DEFAULT_ROLE")
-	if cfg.DefaultRole == "" {
-		cfg.DefaultRole = "readable"
-	}
-
-	logLevel, ok := logLevels[strings.ToLower(os.Getenv("LOG_LEVEL"))]
-	if !ok {
-		logLevel = slog.LevelInfo
-	}
-	cfg.LogLevel = logLevel
-
-	return cfg, nil
-}
-
 func main() {
-	cfg, err := loadEnvConfig()
+	var cfg config.ServerConfig
+	err := cfg.RegisterEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -73,13 +37,10 @@ func main() {
 	slog.SetDefault(log.With(slog.Int("pid", os.Getpid())))
 	ctx := slogctx.NewCtx(context.Background(), slog.Default())
 
-	err = run(ctx, cfg)
-	if err != nil {
-		panic(err)
-	}
+	run(ctx, cfg)
 }
 
-func run(ctx context.Context, cfg config.ServerConfig) error {
+func run(ctx context.Context, cfg config.ServerConfig) {
 	log := slogctx.FromCtx(ctx)
 
 	pg, err := postgres.New(cfg.PSQL)
@@ -95,12 +56,27 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		os.Exit(1)
 	}
 
+	bs, err := bucketstore.New(cfg.S3Config)
+	if err != nil {
+		log.Error("run cannot configure s3 storage", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	err = bs.Ping(ctx)
+	if err != nil {
+		log.Error("run cannot ping s3 storage", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
-	entryRepository := repository.NewPostgresEntryRepository(pg)
+	entryRepository := repository.NewBucketEntryRepository(bs)
 
-	authService := &models.AuthService{authRepository}
+	err = entryRepository.Boot(ctx)
+	if err != nil {
+		log.Error("run cannot fetch entries", slog.Any("error", err))
+	}
 
-	// /api/v1/entries?count=60&token=ffs-358de43470f328f3
+	authService := &models.AuthService{AuthRepository: authRepository}
 
 	apiV1C := controllers.ApiV1{
 		EntryRepository: entryRepository,
@@ -118,12 +94,12 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 		r.Use(middleware.URLFormat)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
 		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries", apiV1C.CreateEntries)
-		//r.With(apiV1mw.SetAuthentication).Get("/entries/", apiV1C.ListEntries)
 		r.Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.Get("/entries/current", apiV1C.LatestEntry)
 	})
+	r.Mount("/debug", middleware.Profiler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		entry, err := entryRepository.FetchLatestEntry(r.Context())
+		entry, err := entryRepository.FetchLatestSgvEntry(r.Context(), time.Now())
 		if err != nil {
 			if errors.Is(err, models.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -133,8 +109,37 @@ func run(ctx context.Context, cfg config.ServerConfig) error {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%#v", entry)))
+		_, _ = w.Write([]byte(fmt.Sprintf("%#v", entry))) //nolint:errcheck
 	})
+
+	// TODO look at how to prevent shutdown if s3 writes are in-progress?
+	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
+	serverCtx, serverStopCtx := context.WithCancel(ctx)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-sig
+		shutdownCtx, _ := context.WithTimeout(serverCtx, time.Second*10) //nolint:govet
+		go func() {
+			<-shutdownCtx.Done()
+			if errors.Is(shutdownCtx.Err(), context.DeadlineExceeded) {
+				log.Error("graceful shutdown timed out, forcing exit")
+			}
+		}()
+
+		err := server.Shutdown(shutdownCtx)
+		if err != nil {
+			log.Error("cannot shutdown server", slog.Any("error", err))
+		}
+		serverStopCtx()
+	}()
+
 	log.Info("Starting server on", "address", cfg.Server.Address)
-	return http.ListenAndServe(cfg.Server.Address, r)
+	err = server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("server terminated", slog.Any("error", err))
+	}
+	log.Info("shutdown ok")
+	<-serverCtx.Done()
 }

@@ -12,6 +12,25 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] support [MacOS menu bar](https://github.com/adamd9/Nightscout-MacOS-Menu-Bar) (nb: only supports https)
  - [X] unauthenticated api calls should fail, ie support `AUTH_DEFAULT_ROLES=denied`
 
+## Usefully deployable
+
+- [X] Use in-memory data store. Remove postgres.
+      Do not fix >11k entry pg import issue (caused by too-long sql statement)
+   - [X] add to memory store when new entries received
+     - [X] Write current day-, month- and year- files as appropriate
+   - [X] read from memory store when returning current entry
+   - [X] use memory store if possible for `entries` (ie >count entries in memory)
+ - [X] Persist to s3 on shutdown (not needed, s3 is always up-to-date with latest data)
+ - [X] Read from s3 on startup
+ - [X] Trigger write to s3 on each receipt of new data
+ - [X] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
+ - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+ - [ ] Write completed "backup" files when passing into new month/year
+
+##  Next Steps
+ - [ ] serve bundled front-end
+ - [ ] implement socket interface for f/e. See https://github.com/socketio/engine.io-protocol/tree/v3
+
 ## Discoveries:
 - v1 api has at least four different ways to authenticate
 - various api endpoints essentially expose mongodb queries directly - mapping
@@ -21,6 +40,8 @@ Feasibility study to see if Go-based nightscout would be useful.
   `devicestatus-upload` permission does not allow `nightscout-librelink-up` to
   work as it fetches from `/api/v1/entries?count=1` to determine the most-recent
   sgv before uploading new ones
+- nightscout will return the most-recent-before-current-time entry for the
+  `current` apiv1 endpoint, not the max-time entry
 
 
 ### Known-used Endpoints
@@ -65,4 +86,29 @@ nightguard ios app fetches much more info :)
 "/api/v2/properties?"
 "/api/v1/treatments?find%5BeventType%5D=Site%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
 "/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23&find%5BeventType%5D=Sensor%20Change"
+```
+
+[https://github.com/AndyLow91/nightscout-data-transfer](Nightscout pro data transfer tool)
+```
+GET /api/v1/entries.json?count=all&find[dateString][$lte]=2024-11-20&find[dateString][$gte]=2024-07-01
+GET /api/v1/treatments.json?count=all&find[created_at][$lte]=2024-11-20&find[created_at][$gte]=2024-07-01
+POST /api/v1/entries
+POST /api/v1/treatments
+```
+
+[https://www.juggluco.nl/Juggluco/webserver.html](Juggluco) says it implements a nightscout-compatible server.
+```
+GET /api/v1/entries/sgv.json
+GET /api/v1/entries.json
+GET /api/v1/entries/sgv.csv
+GET /api/v1/entries/sgv.tsv or http://127.0.0.1:17580/api/v1/entries/sgv.txt or http://127.0.0.1:17580/api/v1/entries
+GET /api/v1/entries/current
+GET /api/v1/treatments
+
+supports count and find:
+find[date][$gt]=datemsec
+find[date][$gte]=datemsec
+find[date][$lt]=datemsec
+find[date][$lte]=datemsec
+/api/v1/entries.json?count=5&find[dateString][$lt]=2023-03-02T08:04:01
 ```

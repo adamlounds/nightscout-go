@@ -18,9 +18,9 @@ import (
 
 type EntryRepository interface {
 	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
-	FetchLatestEntry(ctx context.Context) (*models.Entry, error)
-	FetchLatestEntries(ctx context.Context, maxEntries int) ([]models.Entry, error)
-	CreateEntries(ctx context.Context, entries []models.Entry) ([]models.Entry, error)
+	FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error)
+	FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
+	CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry
 }
 type AuthRepository interface {
 	GetAPISecretHash(ctx context.Context) string
@@ -53,6 +53,8 @@ type APIV1EntryRequest struct {
 	SgvMgdl   int    `json:"sgv"`
 }
 
+var rfc3339msLayout = "2006-01-02T15:04:05.000Z"
+
 func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
 	ctx := r.Context()
@@ -76,8 +78,8 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 		Device:     entry.Device,
 		Date:       entry.CreatedTime.UnixMilli(),
 		Mills:      entry.CreatedTime.UnixMilli(),
-		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		DateString: entry.CreatedTime.Format(rfc3339msLayout),
+		SysTime:    entry.CreatedTime.Format(rfc3339msLayout),
 		UtcOffset:  0,
 	}
 	render.JSON(w, r, responseEntry)
@@ -87,7 +89,7 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
-	entry, err := a.FetchLatestEntry(ctx)
+	entry, err := a.FetchLatestSgvEntry(ctx, time.Now())
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -103,10 +105,10 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		SgvMgdl:    entry.SgvMgdl,
 		Direction:  entry.Direction,
 		Device:     entry.Device,
-		Date:       entry.CreatedTime.UnixMilli(),
-		Mills:      entry.CreatedTime.UnixMilli(),
-		DateString: entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
-		SysTime:    entry.CreatedTime.Format("2006-01-02T15:04:05.000Z"),
+		Date:       entry.Time.UnixMilli(),
+		Mills:      entry.Time.UnixMilli(),
+		DateString: entry.Time.Format(rfc3339msLayout),
+		SysTime:    entry.CreatedTime.Format(rfc3339msLayout),
 		UtcOffset:  0,
 	}
 	render.JSON(w, r, responseEntry)
@@ -157,9 +159,9 @@ var directionIDByName = map[string]directionID{
 type entryTypeID uint8
 
 const (
-	mbg entryTypeID = 0
-	sgv entryTypeID = 1
-	cal entryTypeID = 2
+	mbg entryTypeID = 1
+	sgv entryTypeID = 2
+	cal entryTypeID = 3
 )
 
 var entryTypeIDByName = map[string]entryTypeID{
@@ -192,12 +194,13 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
 		return
 	}
-	entries, err := a.FetchLatestEntries(ctx, count)
+	entries, err := a.FetchLatestEntries(ctx, time.Now(), count)
 	if err != nil {
 		log.Warn("entryService.ByID failed", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+
 	a.renderEntryList(w, r, entries)
 
 }
@@ -235,11 +238,17 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "invalid date format", http.StatusBadRequest)
 				return
 			}
-			reqEntry.Date = entryTime.Format("2006-01-02T15:04:05.000Z")
+			reqEntry.Date = entryTime.Format(rfc3339msLayout)
+		}
+		_, ok := entryTypeIDByName[reqEntry.Type]
+		if !ok {
+			log.Info("unknown type", slog.String("type", reqEntry.Type))
+			http.Error(w, "invalid type", http.StatusBadRequest)
+			return
 		}
 
 		entries = append(entries, models.Entry{
-			Type:        "sgv",
+			Type:        reqEntry.Type,
 			SgvMgdl:     reqEntry.SgvMgdl,
 			Direction:   reqEntry.Direction,
 			Time:        entryTime,
@@ -248,12 +257,7 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	insertedEntries, err := a.EntryRepository.CreateEntries(ctx, entries)
-	if err != nil {
-		log.Warn("could not create entries", slog.Any("error", err))
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
+	insertedEntries := a.EntryRepository.CreateEntries(ctx, entries)
 
 	// NB while swagger.json says this should return the _rejected_ entries,
 	// cgm_remote_monitor returns the accepted entries
@@ -275,8 +279,8 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 				Device:     entry.Device,
 				Date:       entry.Time.UnixMilli(),
 				Mills:      entry.Time.UnixMilli(),
-				DateString: entry.Time.Format("2006-01-02T15:04:05.000Z"),
-				SysTime:    entry.Time.Format("2006-01-02T15:04:05.000Z"),
+				DateString: entry.Time.Format(rfc3339msLayout),
+				SysTime:    entry.Time.Format(rfc3339msLayout),
 				UtcOffset:  0,
 			})
 		}
@@ -297,7 +301,7 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 			direction = fmt.Sprintf(`"%s"`, entry.Direction)
 		}
 		parts := []string{
-			fmt.Sprintf(`"%s"`, entry.Time.Format("2006-01-02T15:04:05.000Z")),
+			fmt.Sprintf(`"%s"`, entry.Time.Format(rfc3339msLayout)),
 			strconv.FormatInt(entry.Time.UnixMilli(), 10),
 			strconv.Itoa(entry.SgvMgdl),
 			direction,

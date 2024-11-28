@@ -39,6 +39,7 @@ func (b *BucketStore) Get(ctx context.Context, name string) (io.ReadCloser, erro
 	return b.Bucket.Get(ctx, name)
 }
 
+// Upload writes data to a named object in the store.
 func (b *BucketStore) Upload(ctx context.Context, name string, r io.Reader) error {
 	return b.Bucket.Upload(ctx, name, r)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,85 +184,85 @@ func TestCreateEntries(t *testing.T) {
 	assert.Equal(t, repo.memStore.entries[1].Type, "sgv", "unknown Type assumed to be sgv")
 }
 
-// TestSyncToBucket tests the syncToBucket method
+// TestSyncToBucket tests the various day/month/year sync functions
 func TestSyncToBucket(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
+	repo.memStore.deviceNames = []string{"unknown", "device1", "device2", "device3", "device4"}
 
-	now := time.Now()
+	now := time.Date(2024, 11, 28, 10, 0, 0, 0, time.UTC)
+	sameDay := time.Date(2024, 11, 28, 0, 0, 0, 0, time.UTC)
+	sameMonth := time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
+	sameYear := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	lastYear := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
 	repo.memStore.entries = []memEntry{
-		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now.Add(-time.Hour), CreatedTime: now},
+		{Oid: "sameday", Type: "sgv", SgvMgdl: 100, Trend: "DoubleUp", DeviceID: 3, EventTime: sameDay, CreatedTime: now},
+		{Oid: "samemonth", Type: "sgv", SgvMgdl: 101, Trend: "SingleUp", DeviceID: 2, EventTime: sameMonth, CreatedTime: now},
+		{Oid: "sameyear", Type: "sgv", SgvMgdl: 102, Trend: "Flat", DeviceID: 1, EventTime: sameYear, CreatedTime: now},
+		{Oid: "lastyear", Type: "sgv", SgvMgdl: 103, Trend: "SingleDown", DeviceID: 0, EventTime: lastYear, CreatedTime: now},
+	}
+	repo.memStore.dirtyDay = true
+	repo.memStore.dirtyMonth = true
+	repo.memStore.dirtyYears = map[int]struct{}{
+		2024: {},
+		//2023: {},
 	}
 
-	repo.memStore.dirtyDay = true
+	// day files contain entries from today
+	thisDayMatcher := mock.MatchedBy(func(r io.ReadSeeker) bool {
+		json, _ := io.ReadAll(r)
+		r.Seek(0, io.SeekStart) //nolint:errcheck
+		expectedJSON := `[{"dateString":"2024-11-28T00:00:00Z","sysTime":"2024-11-28T10:00:00Z","_id":"sameday","type":"sgv","direction":"DoubleUp","device":"device3","sgv":100}]`
+		return string(json) == expectedJSON
+	})
+	mockStore.On("Upload", mock.Anything, "ns-day/2024-11-28.json", thisDayMatcher).Return(nil).Once()
 
-	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	// month files contain entries from this month, excluding today
+	thisMonthMatcher := mock.MatchedBy(func(r io.ReadSeeker) bool {
+		json, _ := io.ReadAll(r)
+		r.Seek(0, io.SeekStart) //nolint:errcheck
+		expectedJSON := `[{"dateString":"2024-11-01T00:00:00Z","sysTime":"2024-11-28T10:00:00Z","_id":"samemonth","type":"sgv","direction":"SingleUp","device":"device2","sgv":101}]`
+		return string(json) == expectedJSON
+	})
+	mockStore.On("Upload", mock.Anything, "ns-month/2024-11.json", thisMonthMatcher).Return(nil)
+
+	// year files contain entries from this year, excluding the current month
+	thisYearMatcher := mock.MatchedBy(func(r io.ReadSeeker) bool {
+		json, _ := io.ReadAll(r)
+		r.Seek(0, io.SeekStart) //nolint:errcheck
+		expectedJSON := `[{"dateString":"2024-01-01T00:00:00Z","sysTime":"2024-11-28T10:00:00Z","_id":"sameyear","type":"sgv","direction":"Flat","device":"device1","sgv":102}]`
+		return string(json) == expectedJSON
+	})
+	mockStore.On("Upload", mock.Anything, "ns-year/2024.json", thisYearMatcher).Return(nil)
+
+	// TODO implement writing of other years too
+	//lastYearMatcher := mock.MatchedBy(func(r io.ReadSeeker) bool {
+	//	json, _ := io.ReadAll(r)
+	//  r.Seek(0, io.SeekStart)
+	//	expectedJSON := `[{"dateString":"2023-01-01T00:00:00Z","sysTime":"2024-11-28T10:00:00Z","_id":"lastyear","type":"sgv","direction":"SingleDown","device":"device1","sgv":103}]`
+	//	fmt.Println(string(json))
+	//	return string(json) == expectedJSON
+	//})
+	//mockStore.On("Upload", mock.Anything, "ns-year/2023.json", lastYearMatcher).Return(nil)
 
 	repo.syncToBucket(contextWithSilentLogger(), now)
 
 	mockStore.AssertExpectations(t)
 }
 
-// TestSyncDayToBucket tests the syncDayToBucket method
-func TestSyncDayToBucket(t *testing.T) {
+func TestFetchEntries(t *testing.T) {
 	mockStore := &MockBucketStore{}
 	repo := NewBucketEntryRepository(mockStore)
+	dayEntries := `[{"dateString":"2024-11-27T11:50:21.723Z","sysTime":"2024-11-27T11:56:16.158187Z","_id":"674708e0575df739a9711a40","type":"sgv","direction":"Flat","device":"G6 Native / G5 Native","sgv":105}]`
+	mockStore.On("Get", mock.Anything, "ns-day/2024-11-27").Return(io.NopCloser(strings.NewReader(dayEntries)), nil)
 
-	now := time.Now()
-	repo.memStore.entries = []memEntry{
-		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now, CreatedTime: now},
-	}
+	err := repo.fetchEntries(contextWithSilentLogger(), "ns-day/2024-11-27")
 
-	repo.memStore.dirtyDay = true
-
-	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	repo.syncDayToBucket(contextWithSilentLogger(), now)
-
-	// Assert that the Upload method was called
 	mockStore.AssertExpectations(t)
-}
-
-// TestSyncMonthToBucket tests the syncMonthToBucket method
-func TestSyncMonthToBucket(t *testing.T) {
-	mockStore := &MockBucketStore{}
-	repo := NewBucketEntryRepository(mockStore)
-
-	now := time.Now()
-	repo.memStore.entries = []memEntry{
-		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now.Add(-time.Hour), CreatedTime: now},
-	}
-
-	repo.memStore.dirtyMonth = true
-
-	// Mock the Upload method
-	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	// Call syncMonthToBucket
-	repo.syncMonthToBucket(contextWithSilentLogger(), now)
-
-	// Assert that the Upload method was called
-	mockStore.AssertExpectations(t)
-}
-
-// TestSyncYearsToBucket tests the syncYearsToBucket method
-func TestSyncYearsToBucket(t *testing.T) {
-	mockStore := &MockBucketStore{}
-	repo := NewBucketEntryRepository(mockStore)
-
-	now := time.Now()
-	repo.memStore.entries = []memEntry{
-		{Oid: "oid1", Type: "sgv", SgvMgdl: 100, Trend: "Flat", DeviceID: 0, EventTime: now.Add(-time.Hour), CreatedTime: now},
-	}
-
-	repo.memStore.dirtyYears = map[int]struct{}{now.Year(): {}}
-
-	// Mock the Upload method
-	mockStore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	// Call syncYearsToBucket
-	repo.syncYearsToBucket(contextWithSilentLogger(), now)
-
-	// Assert that the Upload method was called
-	mockStore.AssertExpectations(t)
+	memEntries := repo.memStore.entries
+	assert.NoError(t, err)
+	assert.Len(t, memEntries, 1)
+	assert.Len(t, repo.memStore.deviceNames, 2) // device Name has been detected & added to id list
+	assert.Equal(t, "sgv", memEntries[0].Type)
+	assert.Equal(t, 105, memEntries[0].SgvMgdl)
 }

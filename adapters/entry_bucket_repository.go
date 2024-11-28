@@ -347,7 +347,7 @@ func (p BucketEntryRepository) syncMonthToBucket(ctx context.Context, currentTim
 			continue
 		}
 		// month files do not include today's data
-		if entry.EventTime.After(startOfDay) {
+		if !entry.EventTime.Before(startOfDay) {
 			continue
 		}
 		monthEntries = append(monthEntries, storedEntry{
@@ -388,7 +388,7 @@ func (p BucketEntryRepository) syncYearsToBucket(ctx context.Context, currentTim
 			continue
 		}
 		// year files do not include data for current month
-		if e.EventTime.After(startOfMonth) {
+		if !e.EventTime.Before(startOfMonth) {
 			continue
 		}
 		yearsEntries[e.EventTime.Year()] = append(yearsEntries[e.EventTime.Year()], storedEntry{

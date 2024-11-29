@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/adamlounds/nightscout-go/models"
+	nightscoutstore "github.com/adamlounds/nightscout-go/stores/nightscout"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
 	slogctx "github.com/veqryn/slog-context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -262,6 +264,81 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 	// NB while swagger.json says this should return the _rejected_ entries,
 	// cgm_remote_monitor returns the accepted entries
 	a.renderEntryList(w, r, insertedEntries)
+}
+
+type ImportNSRequest struct {
+	Url       string `json:"url"`
+	Token     string `json:"token"`
+	APISecret string `json:"api_secret"`
+}
+
+func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	// TODO look at https://grafana.com/blog/2024/02/09/how-i-write-http-services-in-go-after-13-years/#validating-data
+	// pattern for validation
+	var req ImportNSRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Url == "" {
+		log.Debug("missing url")
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
+	}
+
+	nsUrl, err := url.Parse(req.Url)
+	if err != nil {
+		// Pretty rare, Parse is very lax. ":" seems to work :)
+		log.Debug("bad url: parse fail", slog.String("url", req.Url))
+		http.Error(w, "bad url", http.StatusBadRequest)
+		return
+	}
+	if nsUrl.Scheme != "http" && nsUrl.Scheme != "https" {
+		log.Debug("bad url: unsupported scheme", slog.String("url", req.Url))
+		http.Error(w, "url must be http/https", http.StatusBadRequest)
+		return
+	}
+	if nsUrl.Host == "" {
+		log.Debug("bad url: no host", slog.String("url", req.Url))
+		http.Error(w, "url must include a hostname", http.StatusBadRequest)
+		return
+	}
+
+	if req.Token == "" && req.APISecret == "" {
+		log.Debug("missing credentials", slog.String("token", req.Token), slog.String("api_secret", req.APISecret))
+		http.Error(w, "token or api_secret must be supplied", http.StatusBadRequest)
+		return
+	}
+	if req.APISecret != "" && len(req.APISecret) < 12 {
+		log.Debug("credentials: api_secret too short", slog.String("api_secret", req.APISecret))
+		http.Error(w, "api_secret must be at least 12 characters long", http.StatusBadRequest)
+		return
+	}
+
+	// name-<16 hexits>
+	if req.Token != "" && len(req.Token) < 18 {
+		log.Debug("credentials: token too short", slog.String("api_secret", req.APISecret))
+		http.Error(w, "token must be at least 18 characters long", http.StatusBadRequest)
+		return
+	}
+
+	u := &url.URL{Scheme: nsUrl.Scheme, Host: nsUrl.Host}
+
+	nsCfg := nightscoutstore.NightscoutConfig{
+		URL:       u,
+		Token:     req.Token,
+		APISecret: req.APISecret,
+	}
+
+	store := nightscoutstore.New(nsCfg)
+
+	entries, err := store.FetchAllEntries(ctx)
+	fmt.Printf("received entries %v\n", entries)
+
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries []models.Entry) {

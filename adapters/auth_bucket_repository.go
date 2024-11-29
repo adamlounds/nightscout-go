@@ -3,32 +3,30 @@ package repository
 import (
 	"context"
 	"github.com/adamlounds/nightscout-go/models"
-	pgstore "github.com/adamlounds/nightscout-go/stores/postgres"
 	slogctx "github.com/veqryn/slog-context"
 	"strings"
 )
 
-type PostgresAuthRepository struct {
-	*pgstore.PostgresStore
+type BucketAuthRepository struct {
 	APISecretHash string
 	DefaultRole   string
 }
 
-func NewPostgresAuthRepository(pgstore *pgstore.PostgresStore, APISecretHash string, DefaultRole string) *PostgresAuthRepository {
-	return &PostgresAuthRepository{pgstore, APISecretHash, DefaultRole}
+func NewBucketAuthRepository(APISecretHash string, DefaultRole string) *BucketAuthRepository {
+	return &BucketAuthRepository{APISecretHash, DefaultRole}
 }
 
-func (p PostgresAuthRepository) GetAPISecretHash(ctx context.Context) string {
+func (p BucketAuthRepository) GetAPISecretHash(ctx context.Context) string {
 	return "945a6dadff2d6cd1e8faf31b2da50ce467c440e1"
 }
 
-func (p PostgresAuthRepository) GetDefaultRole(ctx context.Context) string {
+func (p BucketAuthRepository) GetDefaultRole(ctx context.Context) string {
 	return p.DefaultRole
 }
 
 var unknownAuthSubject = &models.AuthSubject{Name: "anonymous", RoleNames: []string{}}
 
-func (p PostgresAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, authToken string) *models.AuthSubject {
+func (p BucketAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, authToken string) *models.AuthSubject {
 	log := slogctx.FromCtx(ctx)
 	if authToken == "" {
 		return unknownAuthSubject

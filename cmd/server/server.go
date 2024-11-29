@@ -9,7 +9,6 @@ import (
 	"github.com/adamlounds/nightscout-go/controllers"
 	"github.com/adamlounds/nightscout-go/models"
 	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
-	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	slogctx "github.com/veqryn/slog-context"
@@ -43,19 +42,6 @@ func main() {
 func run(ctx context.Context, cfg config.ServerConfig) {
 	log := slogctx.FromCtx(ctx)
 
-	pg, err := postgres.New(cfg.PSQL)
-	if err != nil {
-		log.Error("run cannot setup db", slog.Any("error", err))
-		os.Exit(1)
-	}
-	defer pg.Close()
-
-	err = pg.Ping(ctx)
-	if err != nil {
-		log.Error("run cannot ping db", slog.Any("error", err))
-		os.Exit(1)
-	}
-
 	bs, err := bucketstore.New(cfg.S3Config)
 	if err != nil {
 		log.Error("run cannot configure s3 storage", slog.Any("error", err))
@@ -68,7 +54,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		os.Exit(1)
 	}
 
-	authRepository := repository.NewPostgresAuthRepository(pg, cfg.APISecretHash, cfg.DefaultRole)
+	authRepository := repository.NewBucketAuthRepository(cfg.APISecretHash, cfg.DefaultRole)
 	entryRepository := repository.NewBucketEntryRepository(bs)
 
 	err = entryRepository.Boot(ctx)

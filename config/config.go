@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	postgres "github.com/adamlounds/nightscout-go/stores/postgres"
 	"github.com/thanos-io/objstore/providers/s3"
 	"gopkg.in/yaml.v2"
 	"log/slog"
@@ -23,7 +22,6 @@ var logLevels = map[string]slog.Level{
 type ServerConfig struct {
 	APISecretHash string
 	DefaultRole   string
-	PSQL          postgres.PostgresConfig
 	S3Config      s3.Config
 	Server        struct {
 		Address string
@@ -33,14 +31,6 @@ type ServerConfig struct {
 
 // RegisterEnv registers config from the environment
 func (c *ServerConfig) RegisterEnv() error {
-	c.PSQL = postgres.PostgresConfig{
-		Host:     os.Getenv("POSTGRES_HOST"),
-		Port:     os.Getenv("POSTGRES_PORT"),
-		User:     os.Getenv("POSTGRES_USER"),
-		Password: os.Getenv("POSTGRES_PASSWORD"),
-		Database: os.Getenv("POSTGRES_DB"),
-		SSLMode:  os.Getenv("POSTGRES_SSLMODE"),
-	}
 	c.Server.Address = os.Getenv("SERVER_ADDRESS")
 
 	// authn may be performed using a sha1 of API_SECRET

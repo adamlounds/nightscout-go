@@ -26,6 +26,7 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
  - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
  - [ ] Write completed "backup" files when passing into new month/year
+ - [X] Support single-shot import from remote nightscout
 
 ##  Next Steps
  - [ ] serve bundled front-end

@@ -83,7 +83,9 @@ func (b *NightscoutStore) Ping(ctx context.Context) error {
 // instance, in reverse date order
 func (b *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, error) {
 	maxBatches := 100 // just in case something _weird_ happens, don't keep hammering remote server
-	batchSize := 5000 // it may just be me, but my ns instance won't send more than 5417 entries, either in tsv or json...
+	batchSize := 1000 // it may just be me, but my ns instance won't send more than 5417 entries, either in tsv or json...
+	// another ns instance capped itself at 1152 entries, 258KB. Maybe investigate js side?
+	// Hypothesis: it's time based
 
 	lastEntry := models.Entry{}
 	allEntries := []models.Entry{}
@@ -102,11 +104,6 @@ func (b *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, 
 	}
 	return allEntries, nil
 }
-
-// reverse
-//for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-//entries[i], entries[j] = entries[j], entries[i]
-//}
 
 var rfc3339msLayout = "2006-01-02T15:04:05.000Z"
 

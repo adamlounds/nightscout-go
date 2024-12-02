@@ -347,7 +347,18 @@ func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
 		slog.Time("earliestEntry", entries[len(entries)-1].Time),
 	)
 
-	// TODO: import/store
+	// We receive entries from ns in most-recent-first order. Pass them to
+	// CreateEntries in ascending date order for slight speedup
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	insertedEntries := a.EntryRepository.CreateEntries(ctx, entries)
+	log.Info("imported entries from remote nightscout instance",
+		slog.Int("numEntries", len(insertedEntries)),
+		slog.Time("latestEntry", insertedEntries[0].Time),
+		slog.Time("earliestEntry", insertedEntries[len(insertedEntries)-1].Time),
+	)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -398,5 +409,5 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 		responseEntries = append(responseEntries, strings.Join(parts, "\t"))
 	}
 
-	render.PlainText(w, r, strings.Join(responseEntries, "\n"))
+	render.PlainText(w, r, strings.Join(responseEntries, "\r\n"))
 }

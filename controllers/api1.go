@@ -336,9 +336,20 @@ func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
 	store := nightscoutstore.New(nsCfg)
 
 	entries, err := store.FetchAllEntries(ctx)
-	fmt.Printf("received entries %v\n", entries)
+	if err != nil {
+		log.Info("cannot fetch entries from ns", slog.Any("err", err))
+		http.Error(w, "Cannot fetch entries from remote nightscout instance", http.StatusBadRequest)
+		return
+	}
+	log.Debug("fetched entries from remote nightscout instance",
+		slog.Int("numEntries", len(entries)),
+		slog.Time("latestEntry", entries[0].Time),
+		slog.Time("earliestEntry", entries[len(entries)-1].Time),
+	)
 
-	w.WriteHeader(http.StatusCreated)
+	// TODO: import/store
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries []models.Entry) {

@@ -135,7 +135,11 @@ func (b *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int
 		q.Set("secret", b.SecretHash)
 	}
 
-	if lastSeen.Oid != "" {
+	if !lastSeen.Time.IsZero() {
+		// The first time fetchBatchOfEntries is called, it is passed a zero
+		// models.Entry, with a zero time. Subsequent calls pass the
+		// earliest-seen entry so we can ask nightscout for entries before it.
+
 		// nb using `lt` in the absence of deduping. Once dedupe sorted, we
 		// should use `lte` instead.
 		// As the code currently stands, we will lose entries that occur in the
@@ -200,6 +204,14 @@ func (b *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int
 		slog.Time("latestEntry", mEntries[0].Time),
 		slog.Time("earliestEntry", mEntries[len(mEntries)-1].Time),
 	)
+
+	if !lastSeen.Time.IsZero() {
+		if !mEntries[len(mEntries)-1].Time.Before(lastSeen.Time) {
+			// wtf? nightscout is not giving us older entries...
+			slog.Warn("fetchBatchOfEntries remote ns not giving us older entries!")
+			return []models.Entry{}, nil
+		}
+	}
 	return mEntries, nil
 }
 

@@ -85,7 +85,6 @@ func (b *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, 
 	maxBatches := 100 // just in case something _weird_ happens, don't keep hammering remote server
 	batchSize := 1000 // it may just be me, but my ns instance won't send more than 5417 entries, either in tsv or json...
 	// another ns instance capped itself at 1152 entries, 258KB. Maybe investigate js side?
-	// Hypothesis: it's time based
 
 	lastEntry := models.Entry{}
 	allEntries := []models.Entry{}
@@ -132,10 +131,16 @@ func (b *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int
 		q.Set("secret", b.SecretHash)
 	}
 
-	if !lastSeen.Time.IsZero() {
+	if lastSeen.Time.IsZero() {
 		// The first time fetchBatchOfEntries is called, it is passed a zero
-		// models.Entry, with a zero time. Subsequent calls pass the
-		// earliest-seen entry so we can ask nightscout for entries before it.
+		// models.Entry, with a zero time.
+		// NB: there is an undocumented implicit limit of 4 days if no
+		// explicit date range is specified in the query, so we set an explicit
+		// range (date > 1970) in order to get a full batch of entries.
+		q.Set("find[date][$gt]", "0")
+	} else {
+		// Subsequent calls pass the earliest-seen entry so we can ask
+		// nightscout for entries before it.
 
 		// nb using `lt` in the absence of deduping. Once dedupe sorted, we
 		// should use `lte` instead.

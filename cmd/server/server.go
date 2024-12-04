@@ -56,6 +56,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 
 	authRepository := repository.NewBucketAuthRepository(cfg.APISecretHash, cfg.DefaultRole)
 	entryRepository := repository.NewBucketEntryRepository(bs)
+	nightscoutRepository := repository.NewNightscoutRepository()
 
 	err = entryRepository.Boot(ctx)
 	if err != nil {
@@ -65,7 +66,8 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	authService := &models.AuthService{AuthRepository: authRepository}
 
 	apiV1C := controllers.ApiV1{
-		EntryRepository: entryRepository,
+		EntryRepository:      entryRepository,
+		NightscoutRepository: nightscoutRepository,
 	}
 	apiV1mw := controllers.ApiV1AuthnMiddleware{
 		AuthService: authService,

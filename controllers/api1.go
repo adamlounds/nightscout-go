@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/models"
-	nightscoutstore "github.com/adamlounds/nightscout-go/stores/nightscout"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
@@ -30,8 +30,13 @@ type AuthRepository interface {
 	// something about fetching roles too, hence auth not authn in repository name
 }
 
+type NightscoutRepository interface {
+	FetchAllEntries(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error)
+}
+
 type ApiV1 struct {
 	EntryRepository
+	NightscoutRepository
 }
 
 type APIV1EntryResponse struct {
@@ -327,15 +332,13 @@ func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
 
 	u := &url.URL{Scheme: nsUrl.Scheme, Host: nsUrl.Host}
 
-	nsCfg := nightscoutstore.NightscoutConfig{
+	nsCfg := repository.NightscoutConfig{
 		URL:       u,
 		Token:     req.Token,
 		APISecret: req.APISecret,
 	}
 
-	store := nightscoutstore.New(nsCfg)
-
-	entries, err := store.FetchAllEntries(ctx)
+	entries, err := a.FetchAllEntries(ctx, nsCfg)
 	if err != nil {
 		log.Info("cannot fetch entries from ns", slog.Any("err", err))
 		http.Error(w, "Cannot fetch entries from remote nightscout instance", http.StatusBadRequest)

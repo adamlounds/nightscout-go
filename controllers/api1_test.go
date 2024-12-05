@@ -123,7 +123,7 @@ func TestApiV1_ImportNightscoutEntries(t *testing.T) {
 			name:           "token too short",
 			requestBody:    `{"url": "https://example.com", "token": "short"}`,
 			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "token must be at least 18 characters long\n",
+			expectedBody:   "token must be at least 17 characters long\n",
 		},
 		{
 			name:           "successful import",

@@ -324,9 +324,9 @@ func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// name-<16 hexits>
-	if req.Token != "" && len(req.Token) < 18 {
+	if req.Token != "" && len(req.Token) < 17 {
 		log.Debug("credentials: token too short", slog.String("api_secret", req.APISecret))
-		http.Error(w, "token must be at least 18 characters long", http.StatusBadRequest)
+		http.Error(w, "token must be at least 17 characters long", http.StatusBadRequest)
 		return
 	}
 

@@ -31,18 +31,25 @@ func (p BucketAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, a
 	if authToken == "" {
 		return unknownAuthSubject
 	}
-	name, _, found := strings.Cut(authToken, "-")
+	_, _, found := strings.Cut(authToken, "-")
 	if !found {
 		log.Debug("auth token is invalid, should be name-hash")
 		return unknownAuthSubject
 	}
 
-	// TODO move to db
+	// TODO persist. Note we must store Name so caps/hyphens/non-ascii are kept
 	hashes := map[string]*models.AuthSubject{
 		"ffs-358de43470f328f3": {
-			ID:        123,
-			Name:      name,
-			RoleNames: []string{"admin", "cgm-uploader"},
+			Name:      "ffs",
+			RoleNames: []string{"cgm-uploader"},
+		},
+		"-38ff267ebbec81e1": {
+			Name:      "çåƒé",
+			RoleNames: []string{"cgm-uploader"},
+		},
+		"admin-c1f54efaedccba11": {
+			Name:      "A.D.Min",
+			RoleNames: []string{"admin"},
 		},
 	}
 

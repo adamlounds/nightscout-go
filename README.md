@@ -28,6 +28,12 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [ ] Write completed "backup" files when passing into new month/year
  - [X] Support single-shot import from remote nightscout
 
+## Enough to be self-contained useful #1: Nightscout menu bar works
+
+ - [ ] Fetch data from librelinkup every minute = Nightscout menu bar works
+ - [ ] Use generated tokens, do not hardcode
+  - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
+
 ##  Next Steps
  - [ ] serve bundled front-end
  - [ ] implement socket interface for f/e. See https://github.com/socketio/engine.io-protocol/tree/v3

@@ -32,6 +32,9 @@ type ServerConfig struct {
 // RegisterEnv registers config from the environment
 func (c *ServerConfig) RegisterEnv() error {
 	c.Server.Address = os.Getenv("SERVER_ADDRESS")
+	if c.Server.Address == "" {
+		c.Server.Address = "0.0.0.0:8080"
+	}
 
 	// authn may be performed using a sha1 of API_SECRET
 	apiSecret := os.Getenv("API_SECRET")

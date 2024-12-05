@@ -73,15 +73,15 @@ func New(cfg NightscoutConfig) *NightscoutStore {
 	}
 }
 
-func (b *NightscoutStore) Ping(ctx context.Context) error {
+func (s *NightscoutStore) Ping(ctx context.Context) error {
 	return nil
-	//_, err := b.Nightscout.Exists(ctx, "ping")
+	//_, err := s.Nightscout.Exists(ctx, "ping")
 	//return err
 }
 
 // FetchAllEntries fetches all possible entries from the remote nightscout
 // instance, in reverse date order
-func (b *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, error) {
+func (s *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, error) {
 	maxBatches := 100 // just in case something _weird_ happens, don't keep hammering remote server
 	batchSize := 1000 // it may just be me, but my ns instance won't send more than 5417 entries, either in tsv or json...
 	// another ns instance capped itself at 1152 entries, 258KB. Maybe investigate js side?
@@ -89,7 +89,7 @@ func (b *NightscoutStore) FetchAllEntries(ctx context.Context) ([]models.Entry, 
 	lastEntry := models.Entry{}
 	allEntries := []models.Entry{}
 	for i := 0; i < maxBatches; i++ {
-		batchOfEntries, err := b.fetchBatchOfEntries(ctx, batchSize, lastEntry)
+		batchOfEntries, err := s.fetchBatchOfEntries(ctx, batchSize, lastEntry)
 		if err != nil {
 			return nil, fmt.Errorf("cannot FetchAllEntries: %w", err)
 		}
@@ -116,19 +116,19 @@ var rfc3339msLayout = "2006-01-02T15:04:05.000Z"
 // far back the remote nightscout server stores data (note auto-purge in ns is
 // only 90 days), and keep track of the entries (or at least their timestamps)
 // at the desired batch boundaries.
-func (b *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int, lastSeen models.Entry) ([]models.Entry, error) {
+func (s *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int, lastSeen models.Entry) ([]models.Entry, error) {
 	log := slogctx.FromCtx(ctx)
 	log.Debug("fetchEntryBatch called", slog.Int("batchSize", batchSize), slog.String("lastSeenTime", lastSeen.Time.Format(rfc3339msLayout)))
 
-	u := *b.URL
+	u := *s.URL
 	u.Path = path.Join(u.Path, "api", "v1", "entries.json")
 	q := u.Query()
 	q.Set("count", strconv.Itoa(batchSize))
-	if b.Token != "" {
-		q.Set("token", b.Token)
+	if s.Token != "" {
+		q.Set("token", s.Token)
 	}
-	if b.SecretHash != "" {
-		q.Set("secret", b.SecretHash)
+	if s.SecretHash != "" {
+		q.Set("secret", s.SecretHash)
 	}
 
 	if lastSeen.Time.IsZero() {
@@ -153,8 +153,8 @@ func (b *NightscoutStore) fetchBatchOfEntries(ctx context.Context, batchSize int
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	req.Header.Add("User-Agent", "nightscout-go/0.3")
-	if b.SecretHash != "" {
-		req.Header.Add("api-secret", b.SecretHash)
+	if s.SecretHash != "" {
+		req.Header.Add("api-secret", s.SecretHash)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("fetchBatchOfEntries cannot NewRequestWithContext: %w", err)

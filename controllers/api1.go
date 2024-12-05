@@ -94,7 +94,6 @@ func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 
 // LatestEntry handler supports /api/v1/entries/current endpoint: return latest sgv entry
 func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
-
 	ctx := r.Context()
 	entry, err := a.FetchLatestSgvEntry(ctx, time.Now())
 	if err != nil {

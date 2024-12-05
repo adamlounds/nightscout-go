@@ -17,6 +17,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -64,6 +65,21 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	}
 
 	authService := &models.AuthService{AuthRepository: authRepository}
+
+	// TESTING LLU fetch
+	cgm := repository.NewCGMLibrelinkupRepository(repository.LLUConfig{
+		Region:   strings.ToLower(os.Getenv("LINK_UP_REGION")),
+		Username: os.Getenv("LINK_UP_USERNAME"),
+		Password: os.Getenv("LINK_UP_PASSWORD"),
+	})
+	m, err := cgm.FetchRecent(ctx, time.Now())
+	if err != nil {
+		if cgm.ErrorIsAuthnFailed(err) {
+			fmt.Printf("authn failed!\n")
+		}
+	}
+	fmt.Printf("got recent cgm %#v %v", m, err)
+	// END OF TESTING
 
 	apiV1C := controllers.ApiV1{
 		EntryRepository:      entryRepository,

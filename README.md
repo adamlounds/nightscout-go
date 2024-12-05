@@ -26,6 +26,7 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
  - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
  - [ ] Write completed "backup" files when passing into new month/year
+ - [X] Support single-shot import from remote nightscout
 
 ##  Next Steps
  - [ ] serve bundled front-end
@@ -42,6 +43,10 @@ Feasibility study to see if Go-based nightscout would be useful.
   sgv before uploading new ones
 - nightscout will return the most-recent-before-current-time entry for the
   `current` apiv1 endpoint, not the max-time entry
+- the v1 api `entries` endpoint will add an implicit date filter
+  (of now - 4 days) if one is specified in the query.
+  (see `lib/server/query.js` `TWO_DAYS * 2`).
+  Use `find[date][$gte]=1` to bypass.
 
 
 ### Known-used Endpoints

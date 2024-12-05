@@ -24,6 +24,8 @@ import (
 // current: time (8bytes) + oid string ( 24 + 16 header = 40 bytes) = 48 bytes
 // proposed: time (8 bytes) + oid counter (4 bytes) = 12 bytes
 // type enum(4) and trend (enum 10) should be uint8 or smaller.
+// Potential issue/weirdness: imported entries will have created_time based on
+// the original/imported oid, not when this system first saw them.
 type memEntry struct {
 	EventTime   time.Time
 	CreatedTime time.Time

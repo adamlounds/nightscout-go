@@ -4,17 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
-
+	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	slogctx "github.com/veqryn/slog-context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
 )
 
-// mockEntryRepository implements EntryRepository interface for testing
+func contextWithSilentLogger() context.Context {
+	return slogctx.NewCtx(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+type mockNightscoutRepository struct {
+	fetchAllEntriesFn func(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error)
+}
+
+func (m mockNightscoutRepository) FetchAllEntries(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error) {
+	return m.fetchAllEntriesFn(ctx, nsCfg)
+}
+
 type mockEntryRepository struct {
 	fetchByOidFn      func(ctx context.Context, oid string) (*models.Entry, error)
 	fetchLatestFn     func(ctx context.Context, maxTime time.Time) (*models.Entry, error)
@@ -25,15 +40,12 @@ type mockEntryRepository struct {
 func (m mockEntryRepository) FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error) {
 	return m.fetchByOidFn(ctx, oid)
 }
-
 func (m mockEntryRepository) FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
 	return m.fetchLatestFn(ctx, maxTime)
 }
-
 func (m mockEntryRepository) FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error) {
 	return m.fetchLatestListFn(ctx, maxTime, maxEntries)
 }
-
 func (m mockEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry {
 	return m.createEntriesFn(ctx, entries)
 }
@@ -55,6 +67,134 @@ func setupTestRouter(handler http.HandlerFunc, method, path string) *chi.Mux {
 	r.Use(middleware.URLFormat)
 	r.Method(method, path, handler)
 	return r
+}
+
+func TestApiV1_ImportNightscoutEntries(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestBody    string
+		expectedStatus int
+		expectedBody   string
+		mockFn         func(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error)
+	}{
+		{
+			name:           "invalid request body",
+			requestBody:    `{invalid json`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "invalid request body\n",
+		},
+		{
+			name:           "missing url",
+			requestBody:    `{"token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "missing url\n",
+		},
+		{
+			name:           "invalid url scheme",
+			requestBody:    `{"url": "ftp://example.com", "token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "url must be http/https\n",
+		},
+		{
+			name:           "invalid url",
+			requestBody:    `{"url": ":", "token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "bad url\n",
+		},
+		{
+			name:           "invalid url",
+			requestBody:    `{"url": "https://", "token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "url must include a hostname\n",
+		},
+		{
+			name:           "missing credentials",
+			requestBody:    `{"url": "https://example.com"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "token or api_secret must be supplied\n",
+		},
+		{
+			name:           "api_secret too short",
+			requestBody:    `{"url": "https://example.com", "api_secret": "short"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "api_secret must be at least 12 characters long\n",
+		},
+		{
+			name:           "token too short",
+			requestBody:    `{"url": "https://example.com", "token": "short"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "token must be at least 18 characters long\n",
+		},
+		{
+			name:           "successful import",
+			requestBody:    `{"url": "https://example.com", "token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusOK,
+			mockFn: func(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error) {
+				return []models.Entry{
+					{
+						Time:      time.Date(2024, 3, 1, 12, 1, 0, 0, time.UTC),
+						SgvMgdl:   121,
+						Type:      "sgv",
+						Device:    "test",
+						Direction: "FortyFiveUp",
+					},
+					{
+						Time:      time.Date(2024, 3, 1, 12, 0, 0, 0, time.UTC),
+						SgvMgdl:   120,
+						Type:      "sgv",
+						Device:    "test",
+						Direction: "Flat",
+					},
+				}, nil
+			},
+		},
+		{
+			name:           "nightscout fetch error",
+			requestBody:    `{"url": "https://example.com", "token": "sometoken-1234567890abcdef"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Cannot fetch entries from remote nightscout instance\n",
+			mockFn: func(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error) {
+				return nil, errors.New("fetch failed")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock repositories
+			mockEntryRepo := &mockEntryRepository{
+				createEntriesFn: func(ctx context.Context, entries []models.Entry) []models.Entry {
+					return entries
+				},
+			}
+			mockNSRepo := &mockNightscoutRepository{}
+			if tt.mockFn != nil {
+				mockNSRepo.fetchAllEntriesFn = tt.mockFn
+			}
+
+			api := ApiV1{
+				EntryRepository:      mockEntryRepo,
+				NightscoutRepository: mockNSRepo,
+			}
+
+			// Create request
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/import", strings.NewReader(tt.requestBody))
+			req = req.WithContext(contextWithSilentLogger())
+			w := httptest.NewRecorder()
+
+			// Execute request
+			api.ImportNightscoutEntries(w, req)
+
+			// Check response
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			if tt.expectedBody != "" && w.Body.String() != tt.expectedBody {
+				t.Errorf("expected body %q, got %q", tt.expectedBody, w.Body.String())
+			}
+		})
+	}
 }
 
 func TestApiV1_EntryByOid(t *testing.T) {

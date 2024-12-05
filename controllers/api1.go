@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,6 +12,7 @@ import (
 	slogctx "github.com/veqryn/slog-context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -28,8 +30,13 @@ type AuthRepository interface {
 	// something about fetching roles too, hence auth not authn in repository name
 }
 
+type NightscoutRepository interface {
+	FetchAllEntries(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error)
+}
+
 type ApiV1 struct {
 	EntryRepository
+	NightscoutRepository
 }
 
 type APIV1EntryResponse struct {
@@ -264,6 +271,101 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 	a.renderEntryList(w, r, insertedEntries)
 }
 
+type ImportNSRequest struct {
+	Url       string `json:"url"`
+	Token     string `json:"token"`
+	APISecret string `json:"api_secret"`
+}
+
+func (a ApiV1) ImportNightscoutEntries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	// TODO look at https://grafana.com/blog/2024/02/09/how-i-write-http-services-in-go-after-13-years/#validating-data
+	// pattern for validation
+	var req ImportNSRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Url == "" {
+		log.Debug("missing url")
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
+	}
+
+	nsUrl, err := url.Parse(req.Url)
+	if err != nil {
+		// Pretty rare, Parse is very lax. ":" seems to work :)
+		log.Debug("bad url: parse fail", slog.String("url", req.Url))
+		http.Error(w, "bad url", http.StatusBadRequest)
+		return
+	}
+	if nsUrl.Scheme != "http" && nsUrl.Scheme != "https" {
+		log.Debug("bad url: unsupported scheme", slog.String("url", req.Url))
+		http.Error(w, "url must be http/https", http.StatusBadRequest)
+		return
+	}
+	if nsUrl.Host == "" {
+		log.Debug("bad url: no host", slog.String("url", req.Url))
+		http.Error(w, "url must include a hostname", http.StatusBadRequest)
+		return
+	}
+
+	if req.Token == "" && req.APISecret == "" {
+		log.Debug("missing credentials", slog.String("token", req.Token), slog.String("api_secret", req.APISecret))
+		http.Error(w, "token or api_secret must be supplied", http.StatusBadRequest)
+		return
+	}
+	if req.APISecret != "" && len(req.APISecret) < 12 {
+		log.Debug("credentials: api_secret too short", slog.String("api_secret", req.APISecret))
+		http.Error(w, "api_secret must be at least 12 characters long", http.StatusBadRequest)
+		return
+	}
+
+	// name-<16 hexits>
+	if req.Token != "" && len(req.Token) < 18 {
+		log.Debug("credentials: token too short", slog.String("api_secret", req.APISecret))
+		http.Error(w, "token must be at least 18 characters long", http.StatusBadRequest)
+		return
+	}
+
+	u := &url.URL{Scheme: nsUrl.Scheme, Host: nsUrl.Host}
+
+	nsCfg := repository.NightscoutConfig{
+		URL:       u,
+		Token:     req.Token,
+		APISecret: req.APISecret,
+	}
+
+	entries, err := a.FetchAllEntries(ctx, nsCfg)
+	if err != nil {
+		log.Info("cannot fetch entries from ns", slog.Any("err", err))
+		http.Error(w, "Cannot fetch entries from remote nightscout instance", http.StatusBadRequest)
+		return
+	}
+	log.Debug("fetched entries from remote nightscout instance",
+		slog.Int("numEntries", len(entries)),
+		slog.Time("latestEntry", entries[0].Time),
+		slog.Time("earliestEntry", entries[len(entries)-1].Time),
+	)
+
+	// We receive entries from ns in most-recent-first order. Pass them to
+	// CreateEntries in ascending date order for slight speedup
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	insertedEntries := a.EntryRepository.CreateEntries(ctx, entries)
+	log.Info("imported entries from remote nightscout instance",
+		slog.Int("numEntries", len(insertedEntries)),
+		slog.Time("latestEntry", insertedEntries[0].Time),
+		slog.Time("earliestEntry", insertedEntries[len(insertedEntries)-1].Time),
+	)
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries []models.Entry) {
 	urlFormat := a.urlFormat(r)
 
@@ -310,5 +412,5 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 		responseEntries = append(responseEntries, strings.Join(parts, "\t"))
 	}
 
-	render.PlainText(w, r, strings.Join(responseEntries, "\n"))
+	render.PlainText(w, r, strings.Join(responseEntries, "\r\n"))
 }

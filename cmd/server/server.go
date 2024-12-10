@@ -67,18 +67,30 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	authService := &models.AuthService{AuthRepository: authRepository}
 
 	// TESTING LLU fetch
+	entry, err := entryRepository.FetchLatestSgvEntry(ctx, time.Now())
+	if err != nil {
+		log.Error("run cannot fetch entry", slog.Any("error", err))
+		os.Exit(1)
+	}
+
 	cgm := repository.NewCGMLibrelinkupRepository(repository.LLUConfig{
 		Region:   strings.ToLower(os.Getenv("LINK_UP_REGION")),
 		Username: os.Getenv("LINK_UP_USERNAME"),
 		Password: os.Getenv("LINK_UP_PASSWORD"),
 	})
-	m, err := cgm.FetchRecent(ctx, time.Now())
+	m, err := cgm.FetchRecent(ctx, entry.Time)
 	if err != nil {
 		if cgm.ErrorIsAuthnFailed(err) {
 			fmt.Printf("authn failed!\n")
 		}
 	}
-	fmt.Printf("got recent cgm %#v %v", m, err)
+
+	if len(m) > 0 {
+		fmt.Printf("got [%d] cgm readings, latest was %v \n", len(m), m[len(m)-1].Time)
+		//latestEntry := m[len(m)-1]
+		//moar, err := cgm.FetchRecent(ctx, latestEntry.Time)
+		//fmt.Printf("got newer cgm readings! %#v %v\n", moar, err)
+	}
 	// END OF TESTING
 
 	apiV1C := controllers.ApiV1{

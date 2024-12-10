@@ -22,6 +22,7 @@ import (
 
 var ErrAuthnFailed = errors.New("authentication failed")
 var ErrNoConnections = errors.New("no connections found")
+var ErrUnexpectedDataFormat = errors.New("unexpected data from llu")
 
 var knownEndpoints = map[string]string{
 	"ae":  "api-ae.libreview.io",
@@ -85,23 +86,21 @@ func (s *LLUStore) FetchRecent(ctx context.Context, lastSeen time.Time) ([]model
 		}
 	}
 
-	// TODO extract entries from response
-	_, err := s.graph(ctx)
+	sgvEntries, err := s.graph(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetchRecent/graph: %w", err)
 	}
 
-	return []models.Entry{
-		{
-			Oid:         "test-oid",
-			Type:        "sgv",
-			SgvMgdl:     100,
-			Direction:   "Flat",
-			Device:      "test-device",
-			Time:        time.Now(),
-			CreatedTime: time.Now(),
-		},
-	}, nil
+	var entries []models.Entry
+	for _, e := range sgvEntries {
+		if !e.Time.After(lastSeen) {
+			continue
+		}
+
+		entries = append(entries, e)
+	}
+
+	return entries, nil
 }
 
 func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
@@ -156,7 +155,7 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	err = json.Unmarshal(body, &llugr)
 	if err != nil {
 		log.Info("LLUStore graph cannot Decode body", slog.Any("err", err))
-		return nil, fmt.Errorf("LLUStore graph cannot Decode body: %w", err)
+		return nil, ErrUnexpectedDataFormat
 	}
 
 	if llugr.Status != 0 {
@@ -171,10 +170,62 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 			s.SensorSerial = sensor.Sn
 			s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
 		}
-
 	}
 
-	return nil, nil
+	now := time.Now().UTC()
+	var entries []models.Entry
+
+	// historical readings at 15-minute intervals
+	for _, e := range llugr.Data.GraphData {
+		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.Timestamp)
+		if err != nil {
+			log.Warn("LLUStore graph cannot parse timestamp",
+				slog.Any("err", err),
+				slog.String("timestamp", e.Timestamp),
+			)
+			return nil, ErrUnexpectedDataFormat
+		}
+
+		// nb no trend available for historic data
+		entries = append(entries, models.Entry{
+			Type:        "sgv",
+			SgvMgdl:     e.ValueInMgPerDl,
+			Time:        eventTime,
+			CreatedTime: now,
+		})
+	}
+
+	// latest reading available at 1-minute intervals
+	latestReading := llugr.Data.Connection.GlucoseMeasurement
+	if latestReading.Type != 1 {
+		log.Debug("LLUStore graph: unexpected measurement type", slog.Any("glucoseMeasurement", latestReading))
+		return nil, ErrUnexpectedDataFormat
+	}
+
+	directionForTrendArrow := map[int]string{
+		4: "FortyFiveUp",
+		3: "Flat",
+	}
+
+	trendString, _ := directionForTrendArrow[latestReading.TrendArrow]
+	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.Timestamp)
+	if err != nil {
+		log.Warn("LLUStore graph cannot parse timestamp",
+			slog.Any("err", err),
+			slog.String("timestamp", latestReading.Timestamp),
+		)
+		return nil, ErrUnexpectedDataFormat
+	}
+
+	entries = append(entries, models.Entry{
+		Type:        "sgv",
+		SgvMgdl:     latestReading.ValueInMgPerDl,
+		Direction:   trendString,
+		Time:        latestTime,
+		CreatedTime: now,
+	})
+
+	return entries, nil
 }
 
 type lluLoginRequest struct {
@@ -224,7 +275,6 @@ func (s *LLUStore) login(ctx context.Context) error {
 	}
 
 	addLLUHeaders(req)
-	//req.Header.Add("Content-Type", "application/json;charset=UTF-8")
 
 	client := http.Client{}
 	res, err := client.Do(req)

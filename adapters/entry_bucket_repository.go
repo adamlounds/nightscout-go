@@ -77,40 +77,44 @@ func (p BucketEntryRepository) Boot(ctx context.Context) error {
 
 	// loading files in order means we don't have to sort afterwards.
 	now := time.Now()
-	entryFiles := map[string]string{
-		"prevYear": fmt.Sprintf("ns-year/%d.json", now.Year()-1),
-		"year":     fmt.Sprintf("ns-year/%d.json", now.Year()),
-		"month":    fmt.Sprintf("ns-month/%s.json", now.Format("2006-01")),
-		"day":      fmt.Sprintf("ns-day/%s.json", now.Format("2006-01-02")),
+	entryFiles := []string{
+		fmt.Sprintf("ns-year/%d.json", now.Year()-1),            // last year
+		fmt.Sprintf("ns-year/%d.json", now.Year()),              // year to date excl month
+		fmt.Sprintf("ns-month/%s.json", now.Format("2006-01")),  // month to date excl today
+		fmt.Sprintf("ns-day/%s.json", now.Format("2006-01-02")), // today
 	}
 
-	for name, file := range entryFiles {
+	for _, file := range entryFiles {
 		err := p.fetchEntries(ctx, file)
 		if err != nil {
 			if p.BucketStore.IsObjNotFoundErr(err) {
 				log.Debug("boot: cannot find file (not written yet?)",
-					slog.String("name", name),
 					slog.String("file", file),
 				)
 				continue
 			}
 			if p.BucketStore.IsAccessDeniedErr(err) {
 				log.Warn("boot: cannot fetch file - ACCESS DENIED",
-					slog.String("name", name),
 					slog.String("file", file),
 					slog.Any("err", err),
 				)
 				continue
 			}
 			log.Debug("boot: cannot fetch file",
-				slog.String("name", name),
 				slog.String("file", file),
 				slog.Any("err", err),
 			)
 		}
 	}
 
-	log.Info("boot: all entries loaded", slog.Int("numEntries", len(p.memStore.entries)))
+	var mostRecentTime time.Time
+	if len(p.memStore.entries) > 0 {
+		mostRecentTime = p.memStore.entries[len(p.memStore.entries)-1].EventTime
+	}
+	log.Info("boot: all entries loaded",
+		slog.Int("numEntries", len(p.memStore.entries)),
+		slog.Time("mostRecentEntryTime", mostRecentTime),
+	)
 
 	return nil
 }

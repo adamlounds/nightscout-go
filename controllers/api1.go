@@ -22,6 +22,7 @@ type EntryRepository interface {
 	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
 	FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error)
 	FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
+	FetchLatestSGVs(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
 	CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry
 }
 type AuthRepository interface {
@@ -189,6 +190,36 @@ func (a ApiV1) ListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, err := a.FetchLatestEntries(ctx, time.Now(), count)
+	if err != nil {
+		log.Warn("entryService.ByID failed", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	a.renderEntryList(w, r, entries)
+}
+
+func (a ApiV1) ListSGVs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	count, err := strconv.Atoi(r.URL.Query().Get("count"))
+	if err != nil {
+		if r.URL.Query().Get("count") != "" {
+			http.Error(w, "count must be an integer", http.StatusBadRequest)
+			return
+		}
+		count = 20
+	}
+	if count < 1 {
+		http.Error(w, "count must be >= 1", http.StatusBadRequest)
+		return
+	}
+	if count > 50000 {
+		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
+		return
+	}
+	entries, err := a.FetchLatestSGVs(ctx, time.Now(), count)
 	if err != nil {
 		log.Warn("entryService.ByID failed", slog.Any("error", err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -400,4 +431,15 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 	}
 
 	render.PlainText(w, r, strings.Join(responseEntries, "\r\n"))
+}
+
+func (a ApiV1) StatusCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{\"status\":\"ok\"}"))
+}
+func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("[]"))
 }

@@ -105,19 +105,7 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responseEntry := &APIV1EntryResponse{
-		Oid:        entry.Oid,
-		Type:       entry.Type,
-		SgvMgdl:    entry.SgvMgdl,
-		Direction:  entry.Direction,
-		Device:     entry.Device,
-		Date:       entry.Time.UnixMilli(),
-		Mills:      entry.Time.UnixMilli(),
-		DateString: entry.Time.Format(rfc3339msLayout),
-		SysTime:    entry.CreatedTime.Format(rfc3339msLayout),
-		UtcOffset:  0,
-	}
-	render.JSON(w, r, responseEntry)
+	a.renderEntryList(w, r, []models.Entry{*entry})
 }
 
 func (a ApiV1) urlFormat(r *http.Request) string {

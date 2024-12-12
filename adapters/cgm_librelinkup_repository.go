@@ -39,6 +39,10 @@ func NewCGMLibrelinkupRepository(cfg LLUConfig) *CGMLibrelinkupRepository {
 	}
 }
 
+func (r *CGMLibrelinkupRepository) IsConfigured() bool {
+	return r.config.Password != "" && r.config.Username != ""
+}
+
 func (r *CGMLibrelinkupRepository) FetchRecent(ctx context.Context, lastSeen time.Time) ([]models.Entry, error) {
 	return r.store.FetchRecent(ctx, lastSeen)
 }

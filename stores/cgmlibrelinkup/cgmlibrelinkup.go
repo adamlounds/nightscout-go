@@ -20,9 +20,10 @@ import (
 	"time"
 )
 
-var ErrAuthnFailed = errors.New("authentication failed")
-var ErrNoConnections = errors.New("no connections found")
-var ErrUnexpectedDataFormat = errors.New("unexpected data from llu")
+var ErrAuthnFailed = errors.New("llu: authentication failed")
+var ErrNoConnections = errors.New("llu: no connections found")
+var ErrUnexpectedDataFormat = errors.New("llu: unexpected data format")
+var ErrDownForMaintenance = errors.New("llu: servers down for maintenance")
 
 var knownEndpoints = map[string]string{
 	"ae":  "api-ae.libreview.io",
@@ -53,7 +54,6 @@ type LLUStore struct {
 	PatientID         string
 	authTicket        string
 	authTicketExpires time.Time
-	connectionID      string
 	lastLogin         time.Time
 	SensorID          string
 	SensorSerial      string
@@ -72,10 +72,17 @@ func New(cfg *LLUConfig) *LLUStore {
 	}
 }
 
+// FetchRecent fetches entries newer than `lastSeen`, in oldest-first order
+// LibreLinkUp typically returns 48 data points:
+// - 47 points are smoothed 15-minute interval readings covering the last 12 hours
+// - The 48th point is the most recent real-time reading (1-minute interval)
+// This means we get
+// - Initial backfill of 12 hours of data at startup
+// - Continuous real-time updates when polling every minute
 func (s *LLUStore) FetchRecent(ctx context.Context, lastSeen time.Time) ([]models.Entry, error) {
 	log := slogctx.FromCtx(ctx)
-	log.Debug("fetching recent entries from librelinkup")
-	if s.authTicket == "" || s.connectionID == "" || s.authTicketExpires.Before(time.Now()) {
+	log.Debug("fetching recent freshEntries from librelinkup")
+	if s.authTicket == "" || s.UserID == "" || s.authTicketExpires.Before(time.Now()) {
 		err := s.login(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("cannot fetchRecent/login: %w", err)
@@ -91,22 +98,22 @@ func (s *LLUStore) FetchRecent(ctx context.Context, lastSeen time.Time) ([]model
 		return nil, fmt.Errorf("cannot fetchRecent/graph: %w", err)
 	}
 
-	var entries []models.Entry
+	var recentEntries []models.Entry
 	for _, e := range sgvEntries {
 		if !e.Time.After(lastSeen) {
 			continue
 		}
 
-		entries = append(entries, e)
+		recentEntries = append(recentEntries, e)
 	}
 
-	return entries, nil
+	return recentEntries, nil
 }
 
 func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	log := slogctx.FromCtx(ctx)
 	if s.PatientID == "" {
-		log.Warn("LLUStore graph called without PatientID")
+		log.Warn("lluStore graph called without PatientID")
 		return nil, fmt.Errorf("PatientID is required")
 	}
 	u := *s.url
@@ -114,8 +121,8 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		log.Warn("LLUStore graph cannot NewRequestWithContext ", slog.Any("err", err))
-		return nil, fmt.Errorf("LLUStore graph cannot NewRequestWithContext: %w", err)
+		log.Warn("lluStore graph cannot NewRequestWithContext ", slog.Any("err", err))
+		return nil, fmt.Errorf("lluStore graph cannot NewRequestWithContext: %w", err)
 	}
 
 	addLLUHeaders(req)
@@ -126,40 +133,41 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	if err != nil {
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
-			log.Info("LLUStore graph DNSError", slog.Any("err", dnsError))
-			return nil, fmt.Errorf("LLUStore graph remote server NOT FOUND: %w", err)
+			log.Info("lluStore graph DNSError", slog.Any("err", dnsError))
+			return nil, fmt.Errorf("lluStore graph remote server NOT FOUND: %w", err)
 		}
-		log.Info("LLUStore graph cannot Do req", slog.Any("err", err))
-		return nil, fmt.Errorf("LLUStore graph cannot Do req: %w", err)
+		log.Info("lluStore graph cannot Do req", slog.Any("err", err))
+		return nil, fmt.Errorf("lluStore graph cannot Do req: %w", err)
 	}
 	body, _ := io.ReadAll(res.Body)
-	log.Debug("LLUStore graph got response",
+	log.Debug("lluStore graph got response",
 		slog.Int("code", res.StatusCode),
 		slog.String("url", u.String()),
 		slog.String("body", string(body)),
 	)
 
 	if res.StatusCode != 200 {
-		log.Info("LLUStore graph got non-200 res",
+		if res.StatusCode == 911 {
+			log.Debug("lluStore graph got 911 (maintenance) response")
+			return nil, ErrDownForMaintenance
+		}
+		log.Info("lluStore graph got non-200 res",
 			slog.Int("code", res.StatusCode),
 			slog.String("url", u.String()),
 			slog.Any("body", body),
 		)
-		return nil, fmt.Errorf("LLUStore graph got non-200 response: %w", err)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("LLUStore graph failed: %w", err)
+		return nil, fmt.Errorf("lluStore graph got non-200 response: %w", err)
 	}
 
 	var llugr lluGraphResponse
 	err = json.Unmarshal(body, &llugr)
 	if err != nil {
-		log.Info("LLUStore graph cannot Decode body", slog.Any("err", err))
+		log.Info("lluStore graph cannot Decode body", slog.Any("err", err))
 		return nil, ErrUnexpectedDataFormat
 	}
 
 	if llugr.Status != 0 {
-		log.Debug("LLUStore graph failed, unexpected status", slog.Int("status", llugr.Status))
+		log.Debug("lluStore graph failed, unexpected status", slog.Int("status", llugr.Status))
 		return nil, ErrAuthnFailed
 	}
 
@@ -179,7 +187,7 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	for _, e := range llugr.Data.GraphData {
 		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.Timestamp)
 		if err != nil {
-			log.Warn("LLUStore graph cannot parse timestamp",
+			log.Warn("lluStore graph cannot parse timestamp",
 				slog.Any("err", err),
 				slog.String("timestamp", e.Timestamp),
 			)
@@ -198,19 +206,23 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	// latest reading available at 1-minute intervals
 	latestReading := llugr.Data.Connection.GlucoseMeasurement
 	if latestReading.Type != 1 {
-		log.Debug("LLUStore graph: unexpected measurement type", slog.Any("glucoseMeasurement", latestReading))
+		log.Debug("lluStore graph: unexpected measurement type", slog.Any("glucoseMeasurement", latestReading))
 		return nil, ErrUnexpectedDataFormat
 	}
 
 	directionForTrendArrow := map[int]string{
-		4: "FortyFiveUp",
+		0: "NOT COMPUTABLE",
+		1: "SingleDown",
+		2: "FortyFiveDown",
 		3: "Flat",
+		4: "FortyFiveUp",
+		5: "SingleUp",
 	}
 
-	trendString, _ := directionForTrendArrow[latestReading.TrendArrow]
+	trendString := directionForTrendArrow[latestReading.TrendArrow]
 	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.Timestamp)
 	if err != nil {
-		log.Warn("LLUStore graph cannot parse timestamp",
+		log.Warn("lluStore graph cannot parse timestamp",
 			slog.Any("err", err),
 			slog.String("timestamp", latestReading.Timestamp),
 		)
@@ -264,14 +276,14 @@ func (s *LLUStore) login(ctx context.Context) error {
 		Password: s.config.Password,
 	})
 	if err != nil {
-		log.Warn("LLUStore login cannot create login req json", slog.Any("err", err))
-		return fmt.Errorf("LLUStore login cannot create login req json: %w", err)
+		log.Warn("lluStore login cannot create login req json", slog.Any("err", err))
+		return fmt.Errorf("lluStore login cannot create login req json: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBody))
 	if err != nil {
-		log.Warn("LLUStore login cannot NewRequestWithContext ", slog.Any("err", err))
-		return fmt.Errorf("LLUStore cannot NewRequestWithContext: %w", err)
+		log.Warn("lluStore login cannot NewRequestWithContext ", slog.Any("err", err))
+		return fmt.Errorf("lluStore cannot NewRequestWithContext: %w", err)
 	}
 
 	addLLUHeaders(req)
@@ -281,55 +293,62 @@ func (s *LLUStore) login(ctx context.Context) error {
 	if err != nil {
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
-			log.Info("LLUStore DNSError", slog.Any("err", dnsError))
-			return fmt.Errorf("LLUStore remote server NOT FOUND: %w", err)
+			log.Info("lluStore DNSError", slog.Any("err", dnsError))
+			return fmt.Errorf("lluStore remote server NOT FOUND: %w", err)
 		}
-		log.Info("LLUStore login cannot Do req", slog.Any("err", err))
-		return fmt.Errorf("LLUStore cannot Do req: %w", err)
+		log.Info("lluStore login cannot Do req", slog.Any("err", err))
+		return fmt.Errorf("lluStore cannot Do req: %w", err)
 	}
 
 	// may need to json.Unmarshal more than once. Reader is not a ReadSeeker
 	// so will return empty on second Read attempt -> read into byte slice once
 	// and re-use it.
 	body, _ := io.ReadAll(res.Body)
-	log.Debug("LLUStore login got response",
+	log.Debug("lluStore login got response",
 		slog.Int("code", res.StatusCode),
 		slog.String("url", u.String()),
 		slog.String("body", string(body)),
 	)
 
+	// TODO: cope with 911 returned during maintenance
 	if res.StatusCode != 200 {
-		log.Info("LLUStore login got non-200 res",
+		if res.StatusCode == 911 {
+			log.Debug("lluStore login got 911 (maintenance) response")
+			return ErrDownForMaintenance
+		}
+
+		log.Info("lluStore login got non-200 res",
 			slog.Int("code", res.StatusCode),
 			slog.String("url", u.String()),
 			slog.Any("body", body),
 		)
-		return fmt.Errorf("LLUStore got non-200 response: %w", err)
+		return fmt.Errorf("lluStore got non-200 response: %w", err)
 	}
 
 	var regionRedirectResponse lluLoginRegionRedirectResponse
 	err = json.Unmarshal(body, &regionRedirectResponse)
 	if err != nil {
-		log.Info("LLUStore login cannot unmarshal wrong-region response", slog.Any("err", err),
+		log.Info("lluStore login cannot unmarshal wrong-region response", slog.Any("err", err),
 			slog.Any("body", body))
-		return fmt.Errorf("LLUStore login cannot unmarshal wrong-region response: %w", err)
+		return fmt.Errorf("lluStore login cannot unmarshal wrong-region response: %w", err)
 	}
 
+	// known statuses: 0=OK, 2=auth fail, 4=tou not accepted
 	if regionRedirectResponse.Status == 2 {
-		log.Debug("LLUStore login authn failed")
+		log.Debug("lluStore login authn failed")
 		return ErrAuthnFailed
 	}
 
 	if regionRedirectResponse.Data.Region != "" {
 		if s.config.Region == regionRedirectResponse.Data.Region {
-			log.Warn("LLUStore login redirect loop",
+			log.Warn("lluStore login redirect loop",
 				slog.String("origRegion", s.config.Region),
 				slog.String("redirRegion", regionRedirectResponse.Data.Region),
 				slog.String("url", u.String()),
 			)
-			return errors.New("LLUStore login redirect loop?")
+			return errors.New("lluStore login redirect loop")
 		}
-		log.Debug("LLUStore login redirecting to another region",
+		log.Debug("lluStore login redirecting to another region",
 			slog.String("origRegion", s.config.Region),
 			slog.String("redirRegion", regionRedirectResponse.Data.Region),
 		)
@@ -340,8 +359,8 @@ func (s *LLUStore) login(ctx context.Context) error {
 	var loginResponse lluLoginResponse
 	err = json.Unmarshal(body, &loginResponse)
 	if err != nil {
-		log.Info("LLUStore login cannot unmarshal response", slog.Any("err", err))
-		return fmt.Errorf("LLUStore login cannot unmarshal response: %w", err)
+		log.Info("lluStore login cannot unmarshal response", slog.Any("err", err))
+		return fmt.Errorf("lluStore login cannot unmarshal response: %w", err)
 	}
 
 	if loginResponse.Data.AuthTicket.Token == "" {
@@ -354,7 +373,7 @@ func (s *LLUStore) login(ctx context.Context) error {
 	s.setUserID(loginResponse.Data.User.ID)
 	s.authTicket = loginResponse.Data.AuthTicket.Token
 	s.authTicketExpires = time.Unix(int64(loginResponse.Data.AuthTicket.Expires), 0).UTC()
-	log.Debug("LLUStore login: token obtained ok",
+	log.Debug("lluStore login: token obtained ok",
 		slog.String("region", s.config.Region),
 		slog.Time("expiry", s.authTicketExpires),
 	)
@@ -364,7 +383,7 @@ func (s *LLUStore) login(ctx context.Context) error {
 func (s *LLUStore) connections(ctx context.Context) error {
 	log := slogctx.FromCtx(ctx)
 	if s.authTicket == "" {
-		log.Warn("LLUStore connections called without authTicket")
+		log.Warn("lluStore connections called without authTicket")
 		return fmt.Errorf("authTicket is required")
 	}
 	u := *s.url
@@ -372,8 +391,8 @@ func (s *LLUStore) connections(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		log.Warn("LLUStore connections cannot NewRequestWithContext ", slog.Any("err", err))
-		return fmt.Errorf("LLUStore connections cannot NewRequestWithContext: %w", err)
+		log.Warn("lluStore connections cannot NewRequestWithContext ", slog.Any("err", err))
+		return fmt.Errorf("lluStore connections cannot NewRequestWithContext: %w", err)
 	}
 
 	addLLUHeaders(req)
@@ -384,26 +403,30 @@ func (s *LLUStore) connections(ctx context.Context) error {
 	if err != nil {
 		var dnsError *net.DNSError
 		if errors.As(err, &dnsError) {
-			log.Info("LLUStore connections DNSError", slog.Any("err", dnsError))
-			return fmt.Errorf("LLUStore connections remote server NOT FOUND: %w", err)
+			log.Info("lluStore connections DNSError", slog.Any("err", dnsError))
+			return fmt.Errorf("lluStore connections remote server NOT FOUND: %w", err)
 		}
-		log.Info("LLUStore connections cannot Do req", slog.Any("err", err))
-		return fmt.Errorf("LLUStore connections cannot Do req: %w", err)
+		log.Info("lluStore connections cannot Do req", slog.Any("err", err))
+		return fmt.Errorf("lluStore connections cannot Do req: %w", err)
 	}
 	body, _ := io.ReadAll(res.Body)
-	log.Debug("LLUStore connections got response",
+	log.Debug("lluStore connections got response",
 		slog.Int("code", res.StatusCode),
 		slog.String("url", u.String()),
 		slog.String("body", string(body)),
 	)
 
 	if res.StatusCode != 200 {
-		log.Info("LLUStore connections got non-200 res",
+		if res.StatusCode == 911 {
+			log.Debug("lluStore connections got 911 (maintenance) response")
+			return ErrDownForMaintenance
+		}
+		log.Info("lluStore connections got non-200 res",
 			slog.Int("code", res.StatusCode),
 			slog.String("url", u.String()),
 			slog.Any("body", body),
 		)
-		return fmt.Errorf("LLUStore connections got non-200 response: %w", err)
+		return fmt.Errorf("lluStore connections got non-200 response: %w", err)
 	}
 
 	// e25e9a58-8c91-11ef-9073-d6090acef5fa
@@ -411,14 +434,14 @@ func (s *LLUStore) connections(ctx context.Context) error {
 	var llucr lluConnectionsResponse
 	err = json.Unmarshal(body, &llucr)
 	if err != nil {
-		log.Info("LLUStore connections cannot Decode body",
+		log.Info("lluStore connections cannot Decode body",
 			slog.Any("err", err),
 		)
-		return fmt.Errorf("LLUStore connections cannot Decode body: %w", err)
+		return fmt.Errorf("lluStore connections cannot Decode body: %w", err)
 	}
 
 	if llucr.Status != 0 {
-		log.Debug("LLUStore connections failed, unexpected status",
+		log.Debug("lluStore connections failed, unexpected status",
 			slog.Int("status", llucr.Status),
 			slog.Any("body", body),
 		)
@@ -426,7 +449,7 @@ func (s *LLUStore) connections(ctx context.Context) error {
 	}
 
 	if len(llucr.Data) < 1 {
-		log.Warn("LLUStore connections: no connections found")
+		log.Warn("lluStore connections: no connections found")
 		return ErrNoConnections
 	}
 
@@ -440,7 +463,7 @@ func (s *LLUStore) setRegion(region string) {
 	s.config.Region = strings.ToLower(region)
 	endpointString, ok := knownEndpoints[s.config.Region]
 	if !ok {
-		endpointString, _ = knownEndpoints["eu2"]
+		endpointString = knownEndpoints["eu2"]
 	}
 	u, _ := url.Parse("https://" + endpointString)
 	s.url = u

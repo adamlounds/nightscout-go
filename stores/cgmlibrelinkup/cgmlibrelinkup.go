@@ -199,6 +199,7 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 			Type:        "sgv",
 			SgvMgdl:     e.ValueInMgPerDl,
 			Time:        eventTime,
+			Device:      "llu ingester",
 			CreatedTime: now,
 		})
 	}

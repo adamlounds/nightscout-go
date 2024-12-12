@@ -147,29 +147,10 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
 	log := slogctx.FromCtx(ctx)
 
-	var mostRecentEntryTime time.Time
-	entry, err := entryRepository.FetchLatestSgvEntry(ctx, time.Now())
-	if err == nil {
-		mostRecentEntryTime = entry.Time
-	}
-
-	_, err = cgm.FetchRecent(ctx, mostRecentEntryTime)
-	if err != nil {
-		if cgm.ErrorIsAuthnFailed(err) {
-			log.Warn("librelinkup cannot authenticate, check username/password")
-		} else {
-			log.Warn("llu cannot fetch entries", slog.Any("error", err))
-		}
-	}
+	ingestOnce(ctx, entryRepository, cgm)
 
 	go func() {
 		log.Info("starting ingester")
-
-		var lastSeen time.Time
-		entry, err := entryRepository.FetchLatestSgvEntry(ctx, time.Now())
-		if err == nil {
-			lastSeen = entry.Time
-		}
 
 		ticker := time.NewTicker(time.Second * 60)
 		defer ticker.Stop()
@@ -177,22 +158,42 @@ func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryR
 			select {
 			case <-ticker.C:
 				log.Debug("ingester tick")
-				recentEntries, err := cgm.FetchRecent(ctx, lastSeen)
-				if err != nil {
-					if cgm.ErrorIsAuthnFailed(err) {
-						log.Warn("cgm authentication failed, check username/password")
-					}
-				}
-
-				insertedEntries := entryRepository.CreateEntries(ctx, recentEntries)
-				if len(insertedEntries) > 0 {
-					log.Info("ingested entries", slog.Int("numEntries", len(insertedEntries)))
-					lastEntry := insertedEntries[len(insertedEntries)-1]
-					lastSeen = lastEntry.Time
-				}
+				ingestOnce(ctx, entryRepository, cgm)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
+	log := slogctx.FromCtx(ctx)
+
+	var mostRecentEntryTime time.Time
+	entry, err := entryRepository.FetchLatestSgvEntry(ctx, time.Now())
+	if err == nil {
+		mostRecentEntryTime = entry.Time
+	}
+
+	newEntries, err := cgm.FetchRecent(ctx, mostRecentEntryTime)
+	if err != nil {
+		if cgm.ErrorIsAuthnFailed(err) {
+			log.Warn("librelinkup cannot authenticate, check username/password")
+		} else {
+			log.Warn("llu cannot fetch entries", slog.Any("error", err))
+		}
+		return
+	}
+	insertedEntries := entryRepository.CreateEntries(ctx, newEntries)
+	if len(insertedEntries) == 0 {
+		log.Info("ingester: no new entries")
+		return
+	}
+
+	newestEntry := insertedEntries[len(insertedEntries)-1]
+	log.Info("ingested entries",
+		slog.Int("numEntries", len(insertedEntries)),
+		slog.Time("previousNewestEntryTime", mostRecentEntryTime),
+		slog.Time("newestEntryTime", newestEntry.Time),
+	)
 }

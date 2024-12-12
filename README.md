@@ -23,14 +23,15 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] Persist to s3 on shutdown (not needed, s3 is always up-to-date with latest data)
  - [X] Read from s3 on startup
  - [X] Trigger write to s3 on each receipt of new data
- - [X] Support larger bulk-insert. Currently limited to 10802 entries without batch pg inserts
+ - [X] Support larger bulk-insert. Currently limited to 10,802 entries without batch pg inserts
  - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
+   - [ ] Can restart server with librelinkup enabled and we do not get duplicate entries
  - [ ] Write completed "backup" files when passing into new month/year
  - [X] Support single-shot import from remote nightscout
 
 ## Enough to be self-contained useful #1: Nightscout menu bar works
 
- - [ ] Fetch data from librelinkup every minute = Nightscout menu bar works
+ - [X] Fetch data from librelinkup every minute = Nightscout menu bar works
  - [ ] Use generated tokens, do not hardcode
   - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
 
@@ -99,7 +100,7 @@ nightguard ios app fetches much more info :)
 "/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23&find%5BeventType%5D=Sensor%20Change"
 ```
 
-[https://github.com/AndyLow91/nightscout-data-transfer](Nightscout pro data transfer tool)
+[Nightscout pro data transfer tool](https://github.com/AndyLow91/nightscout-data-transfer)
 ```
 GET /api/v1/entries.json?count=all&find[dateString][$lte]=2024-11-20&find[dateString][$gte]=2024-07-01
 GET /api/v1/treatments.json?count=all&find[created_at][$lte]=2024-11-20&find[created_at][$gte]=2024-07-01
@@ -107,7 +108,7 @@ POST /api/v1/entries
 POST /api/v1/treatments
 ```
 
-[https://www.juggluco.nl/Juggluco/webserver.html](Juggluco) says it implements a nightscout-compatible server.
+[Juggluco](https://www.juggluco.nl/Juggluco/webserver.html) says it implements a nightscout-compatible server.
 ```
 GET /api/v1/entries/sgv.json
 GET /api/v1/entries.json

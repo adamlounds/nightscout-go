@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/stretchr/testify/assert"
 	slogctx "github.com/veqryn/slog-context"
 	"io"
 	"log/slog"
@@ -53,11 +55,12 @@ func (m mockEntryRepository) CreateEntries(ctx context.Context, entries []models
 // Helper function to create a test entry
 func createTestEntry(oid string) *models.Entry {
 	return &models.Entry{
-		Oid:         oid,
-		Type:        "sgv",
-		SgvMgdl:     120,
-		Direction:   "Flat",
-		CreatedTime: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+		Oid:       oid,
+		Type:      "sgv",
+		SgvMgdl:   120,
+		Direction: "Flat",
+		Device:    "test device",
+		Time:      time.Date(2024, 1, 2, 12, 13, 14, 15, time.UTC),
 	}
 }
 
@@ -269,32 +272,50 @@ func TestApiV1_LatestEntry(t *testing.T) {
 	tests := []struct {
 		name           string
 		mockFn         func(ctx context.Context, maxTime time.Time) (*models.Entry, error)
+		extension      string
 		expectedStatus int
 		expectJSON     bool
+		expectTSV      bool
 	}{
 		{
 			name: "success",
 			mockFn: func(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
 				return createTestEntry("123"), nil
 			},
+			extension:      ".json",
 			expectedStatus: http.StatusOK,
 			expectJSON:     true,
+			expectTSV:      false,
+		},
+		{
+			name: "success tsv",
+			mockFn: func(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
+				return createTestEntry("123"), nil
+			},
+			extension:      "",
+			expectedStatus: http.StatusOK,
+			expectJSON:     false,
+			expectTSV:      true,
 		},
 		{
 			name: "not found",
 			mockFn: func(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
 				return nil, models.ErrNotFound
 			},
+			extension:      ".json",
 			expectedStatus: http.StatusNotFound,
 			expectJSON:     false,
+			expectTSV:      false,
 		},
 		{
 			name: "internal error",
 			mockFn: func(ctx context.Context, maxTime time.Time) (*models.Entry, error) {
 				return nil, errors.New("internal error")
 			},
+			extension:      ".json",
 			expectedStatus: http.StatusInternalServerError,
 			expectJSON:     false,
+			expectTSV:      false,
 		},
 	}
 
@@ -305,20 +326,39 @@ func TestApiV1_LatestEntry(t *testing.T) {
 			}
 			api := ApiV1{EntryRepository: mock}
 
-			req := httptest.NewRequest("GET", "/entries/current", nil)
+			r := setupTestRouter(api.LatestEntry, "GET", "/entries/current")
+			req := httptest.NewRequest("GET", "/entries/current"+tt.extension, nil)
 			w := httptest.NewRecorder()
-			api.LatestEntry(w, req)
+
+			r.ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 
 			if tt.expectJSON {
-				var response APIV1EntryResponse
+				var response []APIV1EntryResponse
 				err := json.NewDecoder(w.Body).Decode(&response)
 				if err != nil {
 					t.Errorf("Failed to decode response: %v", err)
 				}
+				assert.Len(t, response, 1)
+			}
+			if tt.expectTSV {
+				body, _ := io.ReadAll(w.Body)
+				lines := bytes.Split(body, []byte("\n"))
+				assert.Len(t, lines, 1)
+
+				line := lines[0]
+				fields := bytes.Split(line, []byte("\t"))
+				assert.Len(t, fields, 5)
+
+				// timestamps rounded to nearest second
+				assert.Equal(t, `"2024-01-02T12:13:14.000Z"`, string(fields[0]))
+				assert.Equal(t, "1704197594000", string(fields[1]))
+				assert.Equal(t, "120", string(fields[2]))
+				assert.Equal(t, `"Flat"`, string(fields[3]))
+				assert.Equal(t, `"test device"`, string(fields[4]))
 			}
 		})
 	}

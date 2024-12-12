@@ -492,18 +492,18 @@ func (p BucketEntryRepository) addEntriesToMemStore(ctx context.Context, now tim
 		if !memEntry.EventTime.Before(startOfDay) {
 			if !p.memStore.dirtyDay {
 				p.memStore.dirtyDay = true
-				log.Info("marking day dirty", slog.Any("memEntry", memEntry))
+				log.Debug("marking day dirty", slog.Any("memEntry", memEntry))
 			}
 		} else if !memEntry.EventTime.Before(startOfMonth) {
 			if !p.memStore.dirtyMonth {
-				log.Info("marking month dirty", slog.Any("memEntry", memEntry))
+				log.Debug("marking month dirty", slog.Any("memEntry", memEntry))
 				p.memStore.dirtyMonth = true
 			}
 		} else {
 			_, ok := p.memStore.dirtyYears[memEntry.EventTime.Year()]
 			if !ok {
 				p.memStore.dirtyYears[memEntry.EventTime.Year()] = struct{}{}
-				log.Info("marking year dirty", slog.Int("year", memEntry.EventTime.Year()), slog.Any("memEntry", memEntry))
+				log.Debug("marking year dirty", slog.Int("year", memEntry.EventTime.Year()), slog.Any("memEntry", memEntry))
 			}
 		}
 

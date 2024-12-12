@@ -17,6 +17,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -41,6 +42,7 @@ func main() {
 
 func run(ctx context.Context, cfg config.ServerConfig) {
 	log := slogctx.FromCtx(ctx)
+	serverCtx, serverStopCtx := context.WithCancel(ctx)
 
 	bs, err := bucketstore.New(cfg.S3Config)
 	if err != nil {
@@ -48,7 +50,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		os.Exit(1)
 	}
 
-	err = bs.Ping(ctx)
+	err = bs.Ping(serverCtx)
 	if err != nil {
 		log.Error("run cannot ping s3 storage", slog.Any("error", err))
 		os.Exit(1)
@@ -58,12 +60,22 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	entryRepository := repository.NewBucketEntryRepository(bs)
 	nightscoutRepository := repository.NewNightscoutRepository()
 
-	err = entryRepository.Boot(ctx)
+	err = entryRepository.Boot(serverCtx)
 	if err != nil {
 		log.Error("run cannot fetch entries", slog.Any("error", err))
 	}
 
 	authService := &models.AuthService{AuthRepository: authRepository}
+
+	cgm := repository.NewCGMLibrelinkupRepository(repository.LLUConfig{
+		Region:   strings.ToLower(os.Getenv("LINK_UP_REGION")),
+		Username: os.Getenv("LINK_UP_USERNAME"),
+		Password: os.Getenv("LINK_UP_PASSWORD"),
+	})
+
+	if cgm.IsConfigured() {
+		startIngestor(serverCtx, entryRepository, cgm)
+	}
 
 	apiV1C := controllers.ApiV1{
 		EntryRepository:      entryRepository,
@@ -103,7 +115,6 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 
 	// TODO look at how to prevent shutdown if s3 writes are in-progress?
 	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
-	serverCtx, serverStopCtx := context.WithCancel(ctx)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -131,4 +142,58 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	}
 	log.Info("shutdown ok")
 	<-serverCtx.Done()
+}
+
+func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
+	log := slogctx.FromCtx(ctx)
+
+	ingestOnce(ctx, entryRepository, cgm)
+
+	go func() {
+		log.Info("starting ingester")
+
+		ticker := time.NewTicker(time.Second * 60)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Debug("ingester tick")
+				ingestOnce(ctx, entryRepository, cgm)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
+	log := slogctx.FromCtx(ctx)
+
+	var mostRecentEntryTime time.Time
+	entry, err := entryRepository.FetchLatestSgvEntry(ctx, time.Now())
+	if err == nil {
+		mostRecentEntryTime = entry.Time
+	}
+
+	newEntries, err := cgm.FetchRecent(ctx, mostRecentEntryTime)
+	if err != nil {
+		if cgm.ErrorIsAuthnFailed(err) {
+			log.Warn("librelinkup cannot authenticate, check username/password")
+		} else {
+			log.Warn("llu cannot fetch entries", slog.Any("error", err))
+		}
+		return
+	}
+	insertedEntries := entryRepository.CreateEntries(ctx, newEntries)
+	if len(insertedEntries) == 0 {
+		log.Info("ingester: no new entries")
+		return
+	}
+
+	newestEntry := insertedEntries[len(insertedEntries)-1]
+	log.Info("ingested entries",
+		slog.Int("numEntries", len(insertedEntries)),
+		slog.Time("previousNewestEntryTime", mostRecentEntryTime),
+		slog.Time("newestEntryTime", newestEntry.Time),
+	)
 }

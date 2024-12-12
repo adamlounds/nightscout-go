@@ -36,6 +36,7 @@ type mockEntryRepository struct {
 	fetchByOidFn      func(ctx context.Context, oid string) (*models.Entry, error)
 	fetchLatestFn     func(ctx context.Context, maxTime time.Time) (*models.Entry, error)
 	fetchLatestListFn func(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
+	fetchLatestSGVsFn func(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
 	createEntriesFn   func(ctx context.Context, entries []models.Entry) []models.Entry
 }
 
@@ -47,6 +48,9 @@ func (m mockEntryRepository) FetchLatestSgvEntry(ctx context.Context, maxTime ti
 }
 func (m mockEntryRepository) FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error) {
 	return m.fetchLatestListFn(ctx, maxTime, maxEntries)
+}
+func (m mockEntryRepository) FetchLatestSGVs(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error) {
+	return m.fetchLatestSGVsFn(ctx, maxTime, maxEntries)
 }
 func (m mockEntryRepository) CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry {
 	return m.createEntriesFn(ctx, entries)

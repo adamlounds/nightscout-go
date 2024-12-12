@@ -238,6 +238,35 @@ func (p BucketEntryRepository) FetchLatestEntries(ctx context.Context, maxTime t
 	return entries, nil
 }
 
+func (p BucketEntryRepository) FetchLatestSGVs(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error) {
+
+	// nb (unexpected?) future entries are excluded
+	var entries []models.Entry
+	for i := len(p.memStore.entries) - 1; i >= 0; i-- {
+		e := p.memStore.entries[i]
+
+		if e.EventTime.After(maxTime) {
+			continue
+		}
+		if e.Type != "sgv" {
+			continue
+		}
+		entries = append(entries, models.Entry{
+			Oid:         e.Oid,
+			Type:        e.Type,
+			SgvMgdl:     e.SgvMgdl,
+			Direction:   e.Trend,
+			Device:      p.memStore.deviceNames[e.DeviceID],
+			Time:        e.EventTime,
+			CreatedTime: e.CreatedTime,
+		})
+		if len(entries) == maxEntries {
+			break
+		}
+	}
+	return entries, nil
+}
+
 type storedEntry struct {
 	Time        time.Time `json:"dateString"`
 	CreatedTime time.Time `json:"sysTime"`

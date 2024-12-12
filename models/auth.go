@@ -72,7 +72,15 @@ func (service *AuthService) FetchAuthSubject(ctx context.Context, apiSecretHash 
 		return adminAuthSubject
 	}
 
-	return service.FetchAuthSubjectByAuthToken(ctx, authToken)
+	as := service.FetchAuthSubjectByAuthToken(ctx, authToken)
+	if as.IsAnonymous() {
+		// api-secret header can contain a token 🤪
+		as = service.FetchAuthSubjectByAuthToken(ctx, apiSecretHash)
+		if !as.IsAnonymous() {
+			log.Debug("api secret was an auth token", slog.String("name", as.Name))
+		}
+	}
+	return as
 }
 
 var defaultRoles = map[string]*Role{
@@ -131,4 +139,8 @@ func (service *AuthService) IsPermitted(ctx context.Context, a *Authn, requiredP
 
 func (service *AuthService) IsAPISecretHashValid(ctx context.Context, apiSecretHash string) (isValid bool) {
 	return apiSecretHash == service.AuthRepository.GetAPISecretHash(ctx)
+}
+
+func (as *AuthSubject) IsAnonymous() bool {
+	return as.Name == "anonymous"
 }

@@ -172,11 +172,21 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	}
 
 	if len(llugr.Data.ActiveSensors) > 0 {
-		sensor := llugr.Data.ActiveSensors[0].Sensor
 		if s.SensorID != llugr.Data.ActiveSensors[0].Sensor.Sn {
-			s.SensorID = sensor.DeviceID
-			s.SensorSerial = sensor.Sn
-			s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
+			log.Info("lluStore: new Sensor detected", slog.String("CGMSerialNumber", s.SensorSerial))
+			sensor := llugr.Data.ActiveSensors[0].Sensor
+			if s.SensorID != llugr.Data.ActiveSensors[0].Sensor.Sn {
+				s.SensorID = sensor.DeviceID
+				s.SensorSerial = sensor.Sn
+				s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
+			}
+		}
+	} else {
+		if s.SensorID != "" {
+			log.Warn("lluStore: sensor has expired")
+			s.SensorID = ""
+			s.SensorSerial = ""
+			s.SensorStartTime = time.Unix(0, 0).UTC()
 		}
 	}
 

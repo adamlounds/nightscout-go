@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	repository "github.com/adamlounds/nightscout-go/adapters"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
 	slogctx "github.com/veqryn/slog-context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,12 +20,20 @@ import (
 	"time"
 )
 
+var ErrInvalidTimeString = errors.New("invalid time string")
+
 type EntryRepository interface {
 	FetchEntryByOid(ctx context.Context, oid string) (*models.Entry, error)
 	FetchLatestSgvEntry(ctx context.Context, maxTime time.Time) (*models.Entry, error)
 	FetchLatestEntries(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
 	FetchLatestSGVs(ctx context.Context, maxTime time.Time, maxEntries int) ([]models.Entry, error)
 	CreateEntries(ctx context.Context, entries []models.Entry) []models.Entry
+}
+type TreatmentRepository interface {
+	Boot(ctx context.Context) error
+	FetchTreatmentByOid(ctx context.Context, oid string) (models.Treatment, error)
+	FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error)
+	CreateTreatments(ctx context.Context, treatments []models.Treatment) []models.Treatment
 }
 type AuthRepository interface {
 	GetAPISecretHash(ctx context.Context) string
@@ -37,6 +47,7 @@ type NightscoutRepository interface {
 
 type ApiV1 struct {
 	EntryRepository
+	TreatmentRepository
 	NightscoutRepository
 }
 
@@ -62,6 +73,19 @@ type APIV1EntryRequest struct {
 }
 
 var rfc3339msLayout = "2006-01-02T15:04:05.000Z"
+
+type APIV1TreatmentResponse struct {
+	Oid        string `json:"_id"`        // mongo object id [0-9a-f]{24} eg "67261314d689f977f773bc19"
+	Type       string `json:"type"`       // "sgv"
+	DateString string `json:"created_at"` // rfc3339 plus ms
+	Mills      int64  `json:"mills"`      // ms since epoch
+
+	// optional for all treatments
+	Carbs     *float64 `json:"carbs"`   // null when not specified
+	Insulin   *float64 `json:"insulin"` // null when not specified
+	EnteredBy string   `json:"enteredBy,omitempty"`
+	Notes     string   `json:"notes,omitempty"`
+}
 
 func (a ApiV1) EntryByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
@@ -254,17 +278,13 @@ func (a ApiV1) CreateEntries(w http.ResponseWriter, r *http.Request) {
 	var entries []models.Entry
 	for _, reqEntry := range requestEntries {
 		now := time.Now()
-		entryTime, err := time.Parse(time.RFC3339, reqEntry.Date)
-		if err != nil {
-			// also try offset without a colon, as used by xDrip back-fill
-			entryTime, err = time.Parse("2006-01-02T15:04:05.999999999Z0700", reqEntry.Date)
-			if err != nil {
-				log.Info("invalid date format", slog.String("entryDate", reqEntry.Date))
-				http.Error(w, "invalid date format", http.StatusBadRequest)
-				return
-			}
-			reqEntry.Date = entryTime.Format(rfc3339msLayout)
+		entryTime, err := parseTime(reqEntry.Date)
+		if err != nil || entryTime.IsZero() {
+			log.Info("invalid date format", slog.String("entryDate", reqEntry.Date))
+			http.Error(w, "invalid date format", http.StatusBadRequest)
+			return
 		}
+
 		_, ok := entryTypeIDByName[reqEntry.Type]
 		if !ok {
 			log.Info("unknown type", slog.String("type", reqEntry.Type))
@@ -433,6 +453,23 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 	render.PlainText(w, r, strings.Join(responseEntries, "\r\n"))
 }
 
+func (a ApiV1) renderTreatmentList(w http.ResponseWriter, r *http.Request, treatments []models.Treatment) {
+	// treatments are always json, there are too many distinct fields for tsv
+
+	var response []APIV1TreatmentResponse
+	for _, treatment := range treatments {
+		tTime := treatment.GetTime()
+		response = append(response, APIV1TreatmentResponse{
+			Oid:        treatment.GetID(),
+			Type:       treatment.GetType(),
+			Mills:      tTime.UnixMilli(),
+			DateString: tTime.Format(rfc3339msLayout),
+		})
+	}
+
+	render.JSON(w, r, response)
+}
+
 func (a ApiV1) StatusCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -442,4 +479,206 @@ func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("[]"))
+}
+
+// api can be either json or x-www-urlencoded. ns web ui uses form,
+// shuggah/xdrip uses json
+
+// [{"enteredBy": "xDrip4iOS","eventTime": "2024-12-16T14:56:10.000Z","eventType": "Carbs","carbs": 62}]
+
+// eventTime sent iff it's not "now". js Date.New() accepts this date format 😭
+// enteredBy=adam&eventType=Carb+Correction&glucoseType=Finger&carbs=10.6&units=mg%2Fdl&eventTime=Mon+Dec+16+2024+15%3A59%3A00+GMT%2B0000+(Greenwich+Mean+Time)&created_at=2024-12-16T15%3A59%3A00.000Z
+// could be `Mon Dec 16 2024 16:25:52 GMT+0000 (heure moyenne de Greenwich)` from a french browser.
+type APIV1TreatmentRequest struct {
+	//GlucoseValue int     `json:"glucoseValue"`
+	//CarbsGiven   int     `json:"carbsGiven"`
+	//InsulinGiven float64 `json:"insulinGiven"`
+	//TreatmentTime  time.Time     `json:"created_at"`
+	Type           string  `json:"eventType"`
+	TimeString     string  `json:"eventTime"`
+	AbsorptionTime int     `json:"absorptionTime,omitempty"` // minutes
+	EnteredBy      string  `json:"enteredBy,omitempty"`
+	Insulin        float64 `json:"insulin,omitempty"`
+	UtcOffset      int     `json:"utcOffset,omitempty"`
+	Carbs          float64 `json:"carbs,omitempty"`
+	Glucose        float64 `json:"glucose,omitempty"` // sgv
+	GlucoseType    string  `json:"glucoseType,omitempty"`
+	Units          string  `json:"units,omitempty"`
+	Duration       int     `json:"duration,omitempty"`
+	SensorCode     string  `json:"sensorCode,omitempty"`
+	Notes          string  `json:"notes,omitempty"`
+	Fat            string  `json:"fat,omitempty"`
+	Protein        string  `json:"protein,omitempty"`
+	PreBolus       int     `json:"preBolus,omitempty"`
+	Enteredinsulin string  `json:"enteredinsulin,omitempty"`
+	Relative       int     `json:"relative,omitempty"`
+	SplitExt       string  `json:"splitExt,omitempty"`
+	SplitNow       string  `json:"splitNow,omitempty"`
+	IsAnnouncement bool    `json:"isAnnouncement,omitempty"`
+}
+
+func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	body, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	//fmt.Printf("%v\n", string(body))
+
+	var reqTreatments []APIV1TreatmentRequest
+	err := json.Unmarshal(body, &reqTreatments)
+	if err != nil {
+		log.Info("cannot unmarshal request body", slog.Any("err", err))
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var treatments []models.Treatment
+	for _, reqTreatment := range reqTreatments {
+
+		treatment, err := TreatmentFromJSON(log, reqTreatment)
+		if err != nil {
+			if errors.Is(err, ErrInvalidTimeString) {
+				log.Info("cannot parse treatment eventTime",
+					slog.String("eventTime", reqTreatment.TimeString),
+				)
+				http.Error(w, "unparseable treatment eventTime", http.StatusBadRequest)
+				return
+			}
+
+			if errors.Is(err, models.ErrUnknownTreatmentType) {
+				log.Info("unknown treatment type",
+					slog.String("entryType", reqTreatment.Type),
+				)
+				http.Error(w, "unknown treatment type", http.StatusBadRequest)
+				return
+			}
+
+			log.Info("invalid treatment",
+				slog.String("entryType", reqTreatment.Type),
+				slog.Any("err", err),
+			)
+			http.Error(w, "invalid treatment type", http.StatusBadRequest)
+			return
+		}
+		treatments = append(treatments, treatment)
+	}
+	log.Info("parsed treatments ok", slog.Any("treatments", treatments))
+
+	insertedTreatments := a.TreatmentRepository.CreateTreatments(ctx, treatments)
+
+	// NB while swagger.json says this should return the _rejected_ entries,
+	// cgm_remote_monitor returns the accepted entries
+	a.renderTreatmentList(w, r, insertedTreatments)
+}
+
+var treatmentsByType = map[string]func(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment{
+	"Carbs":    CarbTreatmentFromJSON,
+	"BG Check": BGCheckTreatmentFromJSON,
+}
+
+func TreatmentFromJSON(log *slog.Logger, request APIV1TreatmentRequest) (models.Treatment, error) {
+	t, err := parseTime(request.TimeString)
+	if err != nil {
+		return nil, err
+	}
+	f, ok := treatmentsByType[request.Type]
+	if !ok {
+		return nil, models.ErrUnknownTreatmentType
+	}
+	return f(log, t, request), nil
+}
+
+func BGCheckTreatmentFromJSON(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment {
+	m := models.BGCheckTreatment{
+		Time:      t,
+		BGMgdl:    mgdlFromAny(log, req.Units, req.Glucose),
+		BGSource:  req.GlucoseType, // "sensor"/"manual"
+		EnteredBy: &req.EnteredBy,
+	}
+	if req.Carbs > 0 {
+		m.Carbs = &req.Carbs
+	}
+	if req.Insulin > 0 {
+		m.Insulin = &req.Insulin
+	}
+	if req.Notes != "" {
+		m.Notes = &req.Notes
+	}
+	return m
+}
+
+func CarbTreatmentFromJSON(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment {
+	return models.CarbTreatment{
+		Time:      t,
+		Carbs:     req.Carbs,
+		EnteredBy: &req.EnteredBy,
+	}
+}
+
+func mgdlFromAny(log *slog.Logger, units string, value float64) int {
+	// Glucose meters work in range 0.6-33.3 mmol/l or 10-600 mg/dl.
+	// Do our best to fix bad data.
+
+	// zero value passthrough
+	if value == 0 {
+		return 0
+	}
+
+	if value < 0 {
+		log.Info("invalid (negative) BG ignored")
+		return 0
+	}
+	if value > 600 {
+		log.Info("invalid (high) BG ignored")
+		return 0
+	}
+
+	if units == "mmol" {
+		if value > 34 {
+			log.Info("treatment BG out of range, assuming mg/dl")
+			return int(value)
+		}
+		return int(value * 18)
+	}
+	if units == "mg/dl" {
+		if value < 10 {
+			log.Info("treatment BG out of range, assuming mmol/l")
+			return int(value * 18)
+		}
+		return int(value)
+	}
+	log.Info("unknown blood glucose units", slog.String("units", units))
+	return 0
+}
+
+func parseTime(ts string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		// also try offset without a colon, as used by xDrip back-fill
+		t, err = time.Parse("2006-01-02T15:04:05.999999999Z0700", ts)
+		if err != nil {
+			return t, ErrInvalidTimeString
+		}
+	}
+	return t, nil
+}
+
+func (a ApiV1) TreatmentByOid(w http.ResponseWriter, r *http.Request) {
+	oid := chi.URLParam(r, "oid")
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	treatment, err := a.FetchTreatmentByOid(ctx, oid)
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		log.Warn("treatmentService.ByID failed", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	a.renderTreatmentList(w, r, []models.Treatment{treatment})
 }

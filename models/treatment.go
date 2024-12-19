@@ -1,79 +1,46 @@
 package models
 
 import (
+	"context"
 	"errors"
+	slogctx "github.com/veqryn/slog-context"
 	"time"
 )
 
 var ErrUnknownTreatmentType = errors.New("unknown treatment type")
 
-type Treatment interface {
-	IsAfter(time time.Time) bool
-	SetID(newID string)
-	GetTime() time.Time
-	GetID() string
-	GetType() string
+type Treatment struct {
+	ID     string
+	Type   string
+	Time   time.Time
+	Fields map[string]interface{}
 }
 
-type TreatmentOptions struct {
+func (t *Treatment) Valid(ctx context.Context) error {
+	log := slogctx.FromCtx(ctx)
+	if t.Type == "Carbs" {
+		return t.ValidCarbs(ctx)
+	}
+	log.Info("Valid called on unsupported treatment type")
+	return ErrUnknownTreatmentType
 }
 
-type BGCheckTreatment struct {
-	ID       string
-	Time     time.Time
-	BGMgdl   int
-	BGSource string
+func (t Treatment) ValidCarbs(ctx context.Context) error {
+	log := slogctx.FromCtx(ctx)
+	log.Info("ValidCarbs")
 
-	Carbs     *float64
-	EnteredBy *string
-	Insulin   *float64
-	Notes     *string
-}
-
-func (b BGCheckTreatment) IsAfter(time time.Time) bool {
-	return b.Time.After(time)
-}
-
-func (b BGCheckTreatment) GetTime() time.Time {
-	return b.Time
-}
-func (b BGCheckTreatment) GetID() string {
-	return b.ID
-}
-func (b BGCheckTreatment) GetType() string {
-	return "BG Check"
-}
-func (b BGCheckTreatment) SetID(newID string) {
-	b.ID = newID
-}
-
-type CarbTreatment struct {
-	ID    string
-	Time  time.Time
-	Carbs float64
-
-	BGMgdl    *int
-	BGSource  *string
-	EnteredBy *string
-	Insulin   *float64
-	Notes     *string
-}
-
-func (c CarbTreatment) IsAfter(time time.Time) bool {
-	return c.Time.After(time)
-}
-func (c CarbTreatment) GetTime() time.Time {
-	return c.Time
-}
-func (c CarbTreatment) GetID() string {
-	return c.ID
-}
-func (c CarbTreatment) GetType() string {
-	return "Carbs"
-}
-
-func (c CarbTreatment) SetID(newID string) {
-	c.ID = newID
+	_, ok := t.Fields["carbs"]
+	if !ok {
+		return errors.New("no carbs field found")
+	}
+	carbs, ok := t.Fields["carbs"].(float64)
+	if !ok {
+		return errors.New("non-numeric carbs field found")
+	}
+	if carbs <= 0 {
+		return errors.New("bad carbs value")
+	}
+	return nil
 }
 
 // type Treatment struct {

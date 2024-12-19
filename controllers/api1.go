@@ -31,7 +31,7 @@ type EntryRepository interface {
 }
 type TreatmentRepository interface {
 	Boot(ctx context.Context) error
-	FetchTreatmentByOid(ctx context.Context, oid string) (models.Treatment, error)
+	FetchTreatmentByOid(ctx context.Context, oid string) (*models.Treatment, error)
 	FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error)
 	CreateTreatments(ctx context.Context, treatments []models.Treatment) []models.Treatment
 }
@@ -456,15 +456,20 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 func (a ApiV1) renderTreatmentList(w http.ResponseWriter, r *http.Request, treatments []models.Treatment) {
 	// treatments are always json, there are too many distinct fields for tsv
 
-	var response []APIV1TreatmentResponse
+	var response []map[string]interface{}
 	for _, treatment := range treatments {
-		tTime := treatment.GetTime()
-		response = append(response, APIV1TreatmentResponse{
-			Oid:        treatment.GetID(),
-			Type:       treatment.GetType(),
-			Mills:      tTime.UnixMilli(),
-			DateString: tTime.Format(rfc3339msLayout),
-		})
+		tTime := treatment.Time
+		var treatmentData = map[string]interface{}{}
+		for k, v := range treatment.Fields {
+			treatmentData[k] = v
+			fmt.Printf("hmm %s %v", k, v)
+		}
+		treatmentData["_id"] = treatment.ID
+		treatmentData["eventType"] = treatment.Type
+		treatmentData["mills"] = tTime.UnixMilli()
+		treatmentData["created_at"] = tTime.Format(rfc3339msLayout)
+
+		response = append(response, treatmentData)
 	}
 
 	render.JSON(w, r, response)
@@ -524,9 +529,8 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
 	//fmt.Printf("%v\n", string(body))
-
-	var reqTreatments []APIV1TreatmentRequest
-	err := json.Unmarshal(body, &reqTreatments)
+	var whatevs []map[string]interface{}
+	err := json.Unmarshal(body, &whatevs)
 	if err != nil {
 		log.Info("cannot unmarshal request body", slog.Any("err", err))
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -534,13 +538,13 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var treatments []models.Treatment
-	for _, reqTreatment := range reqTreatments {
+	for _, reqTreatment := range whatevs {
 
-		treatment, err := TreatmentFromJSON(log, reqTreatment)
+		treatment, err := treatmentFromJSON(ctx, reqTreatment)
 		if err != nil {
 			if errors.Is(err, ErrInvalidTimeString) {
 				log.Info("cannot parse treatment eventTime",
-					slog.String("eventTime", reqTreatment.TimeString),
+					slog.Any("eventTime", reqTreatment["eventTime"]),
 				)
 				http.Error(w, "unparseable treatment eventTime", http.StatusBadRequest)
 				return
@@ -548,20 +552,20 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 
 			if errors.Is(err, models.ErrUnknownTreatmentType) {
 				log.Info("unknown treatment type",
-					slog.String("entryType", reqTreatment.Type),
+					slog.Any("entryType", reqTreatment["eventType"]),
 				)
 				http.Error(w, "unknown treatment type", http.StatusBadRequest)
 				return
 			}
 
 			log.Info("invalid treatment",
-				slog.String("entryType", reqTreatment.Type),
+				slog.Any("entryType", reqTreatment["eventType"]),
 				slog.Any("err", err),
 			)
 			http.Error(w, "invalid treatment type", http.StatusBadRequest)
 			return
 		}
-		treatments = append(treatments, treatment)
+		treatments = append(treatments, *treatment)
 	}
 	log.Info("parsed treatments ok", slog.Any("treatments", treatments))
 
@@ -572,85 +576,69 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 	a.renderTreatmentList(w, r, insertedTreatments)
 }
 
-var treatmentsByType = map[string]func(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment{
-	"Carbs":    CarbTreatmentFromJSON,
-	"BG Check": BGCheckTreatmentFromJSON,
-}
+func treatmentFromJSON(ctx context.Context, request map[string]interface{}) (*models.Treatment, error) {
+	eventTimeStr, ok := request["eventTime"].(string)
+	if !ok {
+		return nil, errors.New("missing eventTime")
+	}
 
-func TreatmentFromJSON(log *slog.Logger, request APIV1TreatmentRequest) (models.Treatment, error) {
-	t, err := parseTime(request.TimeString)
+	eventType, ok := request["eventType"].(string)
+	if !ok {
+		return nil, errors.New("missing eventType")
+	}
+
+	eventTime, err := parseTime(eventTimeStr)
 	if err != nil {
 		return nil, err
 	}
-	f, ok := treatmentsByType[request.Type]
-	if !ok {
-		return nil, models.ErrUnknownTreatmentType
+
+	t := &models.Treatment{
+		Time:   eventTime,
+		Type:   eventType,
+		Fields: request,
 	}
-	return f(log, t, request), nil
+	err = t.Valid(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
-func BGCheckTreatmentFromJSON(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment {
-	m := models.BGCheckTreatment{
-		Time:      t,
-		BGMgdl:    mgdlFromAny(log, req.Units, req.Glucose),
-		BGSource:  req.GlucoseType, // "sensor"/"manual"
-		EnteredBy: &req.EnteredBy,
-	}
-	if req.Carbs > 0 {
-		m.Carbs = &req.Carbs
-	}
-	if req.Insulin > 0 {
-		m.Insulin = &req.Insulin
-	}
-	if req.Notes != "" {
-		m.Notes = &req.Notes
-	}
-	return m
-}
-
-func CarbTreatmentFromJSON(log *slog.Logger, t time.Time, req APIV1TreatmentRequest) models.Treatment {
-	return models.CarbTreatment{
-		Time:      t,
-		Carbs:     req.Carbs,
-		EnteredBy: &req.EnteredBy,
-	}
-}
-
-func mgdlFromAny(log *slog.Logger, units string, value float64) int {
-	// Glucose meters work in range 0.6-33.3 mmol/l or 10-600 mg/dl.
-	// Do our best to fix bad data.
-
-	// zero value passthrough
-	if value == 0 {
-		return 0
-	}
-
-	if value < 0 {
-		log.Info("invalid (negative) BG ignored")
-		return 0
-	}
-	if value > 600 {
-		log.Info("invalid (high) BG ignored")
-		return 0
-	}
-
-	if units == "mmol" {
-		if value > 34 {
-			log.Info("treatment BG out of range, assuming mg/dl")
-			return int(value)
-		}
-		return int(value * 18)
-	}
-	if units == "mg/dl" {
-		if value < 10 {
-			log.Info("treatment BG out of range, assuming mmol/l")
-			return int(value * 18)
-		}
-		return int(value)
-	}
-	log.Info("unknown blood glucose units", slog.String("units", units))
-	return 0
-}
+//func mgdlFromAny(log *slog.Logger, units string, value float64) int {
+//	// Glucose meters work in range 0.6-33.3 mmol/l or 10-600 mg/dl.
+//	// Do our best to fix bad data.
+//
+//	// zero value passthrough
+//	if value == 0 {
+//		return 0
+//	}
+//
+//	if value < 0 {
+//		log.Info("invalid (negative) BG ignored")
+//		return 0
+//	}
+//	if value > 600 {
+//		log.Info("invalid (high) BG ignored")
+//		return 0
+//	}
+//
+//	if units == "mmol" {
+//		if value > 34 {
+//			log.Info("treatment BG out of range, assuming mg/dl")
+//			return int(value)
+//		}
+//		return int(value * 18)
+//	}
+//	if units == "mg/dl" {
+//		if value < 10 {
+//			log.Info("treatment BG out of range, assuming mmol/l")
+//			return int(value * 18)
+//		}
+//		return int(value)
+//	}
+//	log.Info("unknown blood glucose units", slog.String("units", units))
+//	return 0
+//}
 
 func parseTime(ts string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, ts)
@@ -680,5 +668,5 @@ func (a ApiV1) TreatmentByOid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.renderTreatmentList(w, r, []models.Treatment{treatment})
+	a.renderTreatmentList(w, r, []models.Treatment{*treatment})
 }

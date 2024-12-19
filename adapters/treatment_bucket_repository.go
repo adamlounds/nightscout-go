@@ -27,15 +27,14 @@ import (
 // Potential issue/weirdness: imported entries will have created_time based on
 // the original/imported oid, not when this system first saw them.
 type memTreatment struct {
-	TreatmentTime time.Time
-	CreatedTime   time.Time
-	Oid           string
-	Type          string
-	fields        map[string]interface{}
+	Time   time.Time
+	Oid    string
+	Type   string
+	fields map[string]interface{}
 }
 
 func (t *memTreatment) IsAfter(time time.Time) bool {
-	return t.TreatmentTime.After(time)
+	return t.Time.After(time)
 }
 
 type storedTreatment struct {
@@ -113,7 +112,7 @@ func (p BucketTreatmentRepository) Boot(ctx context.Context) error {
 
 	var mostRecentTime time.Time
 	if len(p.memTreatmentStore.treatments) > 0 {
-		mostRecentTime = p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1].TreatmentTime
+		mostRecentTime = p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1].Time
 	}
 	log.Info("boot: all entries loaded",
 		slog.Int("numEntries", len(p.memTreatmentStore.treatments)),
@@ -146,35 +145,34 @@ func (p BucketTreatmentRepository) fetchTreatments(ctx context.Context, file str
 	defer p.memTreatmentStore.treatmentsLock.Unlock()
 	for _, t := range result {
 		p.memTreatmentStore.treatments = append(p.memTreatmentStore.treatments, memTreatment{
-			TreatmentTime: t.Time,
-			CreatedTime:   t.CreatedTime,
-			Oid:           t.Oid,
-			Type:          t.Type,
+			Time: t.Time,
+			Oid:  t.Oid,
+			Type: t.Type,
 			// ... add other fields as needed
 		})
 	}
 	return nil
 }
 
-func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid string) (models.Treatment, error) {
+func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid string) (*models.Treatment, error) {
 	for i := len(p.memTreatmentStore.treatments) - 1; i >= 0; i-- {
 		t := p.memTreatmentStore.treatments[i]
 		if t.Oid != oid {
 			continue
 		}
 
-		if t.Type == "BG Check" {
-			return models.BGCheckTreatment{
-				ID:        t.Oid,
-				Time:      t.TreatmentTime,
-				BGMgdl:    123,
-				BGSource:  "Sensor",
-				Carbs:     nil,
-				EnteredBy: nil,
-				Insulin:   nil,
-				Notes:     nil,
-			}, nil
-		}
+		//if t.Type == "BG Check" {
+		//	return models.BGCheckTreatment{
+		//		ID:        t.Oid,
+		//		Time:      t.Time,
+		//		BGMgdl:    123,
+		//		BGSource:  "Sensor",
+		//		Carbs:     nil,
+		//		EnteredBy: nil,
+		//		Insulin:   nil,
+		//		Notes:     nil,
+		//	}, nil
+		//}
 	}
 	return nil, models.ErrNotFound
 }
@@ -184,21 +182,21 @@ func (p BucketTreatmentRepository) FetchLatestTreatments(ctx context.Context, ma
 	for i := len(p.memTreatmentStore.treatments) - 1; i >= 0; i-- {
 		t := p.memTreatmentStore.treatments[i]
 
-		if t.TreatmentTime.After(maxTime) {
+		if t.Time.After(maxTime) {
 			continue
 		}
-		if t.Type == "BG Check" {
-			treatments = append(treatments, models.BGCheckTreatment{
-				ID:        t.Oid,
-				Time:      t.TreatmentTime,
-				BGMgdl:    123,
-				BGSource:  "Sensor",
-				Carbs:     nil,
-				EnteredBy: nil,
-				Insulin:   nil,
-				Notes:     nil,
-			})
-		}
+		//if t.Type == "BG Check" {
+		//	treatments = append(treatments, models.BGCheckTreatment{
+		//		ID:        t.Oid,
+		//		Time:      t.Time,
+		//		BGMgdl:    123,
+		//		BGSource:  "Sensor",
+		//		Carbs:     nil,
+		//		EnteredBy: nil,
+		//		Insulin:   nil,
+		//		Notes:     nil,
+		//	})
+		//}
 		if len(treatments) == maxTreatments {
 			break
 		}
@@ -240,14 +238,13 @@ func (p BucketTreatmentRepository) syncDayToBucket(ctx context.Context, currentT
 	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, time.UTC)
 
 	for _, treatment := range p.memTreatmentStore.treatments {
-		if treatment.TreatmentTime.Before(startOfDay) {
+		if treatment.Time.Before(startOfDay) {
 			continue
 		}
 		dayTreatments = append(dayTreatments, storedTreatment{
-			Oid:         treatment.Oid,
-			Type:        treatment.Type,
-			Time:        treatment.TreatmentTime,
-			CreatedTime: treatment.CreatedTime,
+			Oid:  treatment.Oid,
+			Type: treatment.Type,
+			Time: treatment.Time,
 			// ... map other treatment fields
 		})
 	}
@@ -291,17 +288,16 @@ func (p BucketTreatmentRepository) syncMonthToBucket(ctx context.Context, curren
 	startOfDay := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, time.UTC)
 
 	for _, treatment := range p.memTreatmentStore.treatments {
-		if treatment.TreatmentTime.Before(startOfMonth) {
+		if treatment.Time.Before(startOfMonth) {
 			continue
 		}
-		if !treatment.TreatmentTime.Before(startOfDay) {
+		if !treatment.Time.Before(startOfDay) {
 			continue
 		}
 		monthTreatments = append(monthTreatments, storedTreatment{
-			Oid:         treatment.Oid,
-			Type:        treatment.Type,
-			Time:        treatment.TreatmentTime,
-			CreatedTime: treatment.CreatedTime,
+			Oid:  treatment.Oid,
+			Type: treatment.Type,
+			Time: treatment.Time,
 			// ... map other treatment fields
 		})
 	}
@@ -324,17 +320,16 @@ func (p BucketTreatmentRepository) syncYearsToBucket(ctx context.Context, curren
 	startOfMonth := time.Date(currentTime.Year(), currentTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	for _, t := range p.memTreatmentStore.treatments {
-		if t.TreatmentTime.Before(startOfYear) {
+		if t.Time.Before(startOfYear) {
 			continue
 		}
-		if !t.TreatmentTime.Before(startOfMonth) {
+		if !t.Time.Before(startOfMonth) {
 			continue
 		}
-		yearsTreatments[t.TreatmentTime.Year()] = append(yearsTreatments[t.TreatmentTime.Year()], storedTreatment{
-			Oid:         t.Oid,
-			Type:        t.Type,
-			Time:        t.TreatmentTime,
-			CreatedTime: t.CreatedTime,
+		yearsTreatments[t.Time.Year()] = append(yearsTreatments[t.Time.Year()], storedTreatment{
+			Oid:  t.Oid,
+			Type: t.Type,
+			Time: t.Time,
 			// ... map other treatment fields
 		})
 	}
@@ -362,10 +357,10 @@ func (p BucketTreatmentRepository) addTreatmentsToMemStore(ctx context.Context, 
 
 	if len(p.memTreatmentStore.treatments) > 0 {
 		lastTreatment := p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1]
-		lastTreatmentTime := lastTreatment.TreatmentTime.Add(time.Second * 10)
+		lastTreatmentTime := lastTreatment.Time.Add(time.Second * 10)
 		for _, treatment := range treatments {
-			if !treatment.IsAfter(lastTreatmentTime) {
-				log.Info("potential dupe", slog.Time("treatment", treatment.GetTime()), slog.Time("lastTreatment", lastTreatmentTime))
+			if !treatment.Time.After(lastTreatmentTime) {
+				log.Info("potential dupe", slog.Time("treatment", treatment.Time), slog.Time("lastTreatment", lastTreatmentTime))
 			}
 		}
 	}
@@ -380,60 +375,57 @@ func (p BucketTreatmentRepository) addTreatmentsToMemStore(ctx context.Context, 
 
 	var lastTreatmentTime time.Time
 	if len(p.memTreatmentStore.treatments) > 0 {
-		lastTreatmentTime = p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1].TreatmentTime
+		lastTreatmentTime = p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1].Time
 	}
 
 	treatmentsNeedSorting := false
 	for _, t := range treatments {
-		oid := t.GetID()
+		oid := t.ID
 		if oid == "" {
 			oid = primitive.NewObjectIDFromTimestamp(now).Hex()
 		}
 
 		memTreatment := memTreatment{
-			Oid:           oid,
-			Type:          t.GetType(),
-			TreatmentTime: t.GetTime(),
-			CreatedTime:   now,
-			// ... map other treatment fields
+			Oid:    oid,
+			Type:   t.Type,
+			Time:   t.Time,
+			fields: t.Fields,
 		}
 
 		p.memTreatmentStore.treatments = append(p.memTreatmentStore.treatments, memTreatment)
 
-		if memTreatment.TreatmentTime.Before(lastTreatmentTime) {
+		if memTreatment.Time.Before(lastTreatmentTime) {
 			treatmentsNeedSorting = true
 		}
 
-		if !memTreatment.TreatmentTime.Before(startOfDay) {
+		if !memTreatment.Time.Before(startOfDay) {
 			if !p.memTreatmentStore.dirtyDay {
 				p.memTreatmentStore.dirtyDay = true
 				log.Debug("marking day dirty", slog.Any("memTreatment", memTreatment))
 			}
-		} else if !memTreatment.TreatmentTime.Before(startOfMonth) {
+		} else if !memTreatment.Time.Before(startOfMonth) {
 			if !p.memTreatmentStore.dirtyMonth {
 				log.Debug("marking month dirty", slog.Any("memTreatment", memTreatment))
 				p.memTreatmentStore.dirtyMonth = true
 			}
 		} else {
-			_, ok := p.memTreatmentStore.dirtyYears[memTreatment.TreatmentTime.Year()]
+			_, ok := p.memTreatmentStore.dirtyYears[memTreatment.Time.Year()]
 			if !ok {
-				p.memTreatmentStore.dirtyYears[memTreatment.TreatmentTime.Year()] = struct{}{}
-				log.Debug("marking year dirty", slog.Int("year", memTreatment.TreatmentTime.Year()), slog.Any("memTreatment", memTreatment))
+				p.memTreatmentStore.dirtyYears[memTreatment.Time.Year()] = struct{}{}
+				log.Debug("marking year dirty", slog.Int("year", memTreatment.Time.Year()), slog.Any("memTreatment", memTreatment))
 			}
 		}
 
-		lastTreatmentTime = memTreatment.TreatmentTime
+		lastTreatmentTime = memTreatment.Time
 
-		if memTreatment.Type == "BG Check" {
-			t.SetID(oid)
-			modelTreatments = append(modelTreatments, t)
-		}
+		t.ID = oid
+		modelTreatments = append(modelTreatments, t)
 	}
 	log.Info("inserted treatments", slog.Int("totalTreatments", len(p.memTreatmentStore.treatments)), slog.Int("numInserted", len(treatments)))
 
 	if treatmentsNeedSorting {
 		t1 := time.Now()
-		slices.SortFunc(p.memTreatmentStore.treatments, func(a, b memTreatment) int { return a.TreatmentTime.Compare(b.TreatmentTime) })
+		slices.SortFunc(p.memTreatmentStore.treatments, func(a, b memTreatment) int { return a.Time.Compare(b.Time) })
 		log.Debug("treatments sorted", slog.Int64("duration_us", time.Since(t1).Microseconds()))
 	}
 

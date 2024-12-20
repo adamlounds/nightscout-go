@@ -391,6 +391,10 @@ func (p BucketTreatmentRepository) addTreatmentsToMemStore(ctx context.Context, 
 			Time:   t.Time,
 			fields: t.Fields,
 		}
+		delete(memTreatment.fields, "_id")
+		delete(memTreatment.fields, "eventType")
+		delete(memTreatment.fields, "eventTime")
+		delete(memTreatment.fields, "created_at")
 
 		p.memTreatmentStore.treatments = append(p.memTreatmentStore.treatments, memTreatment)
 

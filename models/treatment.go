@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
+	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -17,28 +20,49 @@ type Treatment struct {
 }
 
 func (t *Treatment) Valid(ctx context.Context) error {
-	log := slogctx.FromCtx(ctx)
 	if t.Type == "Carbs" {
 		return t.ValidCarbs(ctx)
 	}
-	log.Info("Valid called on unsupported treatment type")
-	return ErrUnknownTreatmentType
+
+	// unknown/unvalidated types are all accepted. Anything goes, baby :)
+	return nil
 }
+
+var numRE = regexp.MustCompile(`^-?[0-9]*[.]?[0-9]*$`)
 
 func (t Treatment) ValidCarbs(ctx context.Context) error {
 	log := slogctx.FromCtx(ctx)
-	log.Info("ValidCarbs")
-
+	// spike at validation, rejecting ".", "1e3" and <=0
+	// but accepting/sanitising "01.50", ".5", "1." etc
+	// TODO look at using https://zog.dev for parsing/validation
 	_, ok := t.Fields["carbs"]
 	if !ok {
-		return errors.New("no carbs field found")
+		log.Debug("no carbs field", slog.Any("fields", t.Fields))
+		return errors.New("carbs type must have carbs field")
 	}
 	carbs, ok := t.Fields["carbs"].(float64)
 	if !ok {
-		return errors.New("non-numeric carbs field found")
+		carbsStr, ok := t.Fields["carbs"].(string)
+		if !ok {
+			return errors.New("carbs field cannot be null")
+		}
+		if carbsStr == "" {
+			return errors.New("carbs field cannot be empty")
+		}
+
+		if !numRE.MatchString(carbsStr) {
+			return errors.New("carbs field must be numeric")
+		}
+
+		var err error
+		carbs, err = strconv.ParseFloat(carbsStr, 64)
+		if err != nil {
+			return errors.New("carbs field must be numeric")
+		}
+		t.Fields["carbs"] = carbs
 	}
 	if carbs <= 0 {
-		return errors.New("bad carbs value")
+		return errors.New("carbs field must be positive")
 	}
 	return nil
 }

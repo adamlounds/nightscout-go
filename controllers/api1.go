@@ -459,15 +459,15 @@ func (a ApiV1) renderTreatmentList(w http.ResponseWriter, r *http.Request, treat
 	var response []map[string]interface{}
 	for _, treatment := range treatments {
 		tTime := treatment.Time
-		var treatmentData = map[string]interface{}{}
+		var treatmentData = map[string]interface{}{
+			"_id":        treatment.ID,
+			"eventType":  treatment.Type,
+			"mills":      tTime.UnixMilli(),
+			"created_at": tTime.Format(rfc3339msLayout),
+		}
 		for k, v := range treatment.Fields {
 			treatmentData[k] = v
-			fmt.Printf("hmm %s %v", k, v)
 		}
-		treatmentData["_id"] = treatment.ID
-		treatmentData["eventType"] = treatment.Type
-		treatmentData["mills"] = tTime.UnixMilli()
-		treatmentData["created_at"] = tTime.Format(rfc3339msLayout)
 
 		response = append(response, treatmentData)
 	}
@@ -545,6 +545,7 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, ErrInvalidTimeString) {
 				log.Info("cannot parse treatment eventTime",
 					slog.Any("eventTime", reqTreatment["eventTime"]),
+					slog.Any("fields", reqTreatment),
 				)
 				http.Error(w, "unparseable treatment eventTime", http.StatusBadRequest)
 				return
@@ -553,6 +554,7 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, models.ErrUnknownTreatmentType) {
 				log.Info("unknown treatment type",
 					slog.Any("entryType", reqTreatment["eventType"]),
+					slog.Any("fields", reqTreatment),
 				)
 				http.Error(w, "unknown treatment type", http.StatusBadRequest)
 				return
@@ -561,6 +563,7 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 			log.Info("invalid treatment",
 				slog.Any("entryType", reqTreatment["eventType"]),
 				slog.Any("err", err),
+				slog.Any("fields", reqTreatment),
 			)
 			http.Error(w, "invalid treatment type", http.StatusBadRequest)
 			return
@@ -577,14 +580,21 @@ func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
 }
 
 func treatmentFromJSON(ctx context.Context, request map[string]interface{}) (*models.Treatment, error) {
-	eventTimeStr, ok := request["eventTime"].(string)
-	if !ok {
-		return nil, errors.New("missing eventTime")
-	}
-
 	eventType, ok := request["eventType"].(string)
 	if !ok {
 		return nil, errors.New("missing eventType")
+	}
+
+	eventTimeStr, ok := request["eventTime"].(string)
+	if !ok {
+		// cgm-remote-monitor also supports passing `created_at` since a695a1d
+		createdAtStr, ok := request["created_at"].(string)
+		if ok {
+			eventTimeStr = createdAtStr
+		} else {
+			// fallback when both eventTime and created_at are null/omitted
+			eventTimeStr = time.Now().UTC().Format(rfc3339msLayout)
+		}
 	}
 
 	eventTime, err := parseTime(eventTimeStr)
@@ -595,8 +605,17 @@ func treatmentFromJSON(ctx context.Context, request map[string]interface{}) (*mo
 	t := &models.Treatment{
 		Time:   eventTime,
 		Type:   eventType,
-		Fields: request,
+		Fields: map[string]interface{}{},
 	}
+
+	// copy non-global fields in. We need the original in case we want to log
+	for k, v := range request {
+		t.Fields[k] = v
+	}
+	delete(t.Fields, "eventTime")
+	delete(t.Fields, "eventType")
+	delete(t.Fields, "created_at")
+
 	err = t.Valid(ctx)
 	if err != nil {
 		return nil, err

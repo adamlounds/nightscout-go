@@ -607,6 +607,10 @@ func treatmentFromJSON(ctx context.Context, request map[string]interface{}) (*mo
 		Type:   eventType,
 		Fields: map[string]interface{}{},
 	}
+	existingID, ok := request["_id"].(string)
+	if ok && existingID != "" {
+		t.ID = existingID
+	}
 
 	// copy non-global fields in. We need the original in case we want to log
 	for k, v := range request {
@@ -671,6 +675,7 @@ func parseTime(ts string) (time.Time, error) {
 	return t, nil
 }
 
+// TreatmentByOid not implemented by ns, but added for symmetry with entries api
 func (a ApiV1) TreatmentByOid(w http.ResponseWriter, r *http.Request) {
 	oid := chi.URLParam(r, "oid")
 	ctx := r.Context()

@@ -161,18 +161,12 @@ func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid 
 			continue
 		}
 
-		//if t.Type == "BG Check" {
-		//	return models.BGCheckTreatment{
-		//		ID:        t.Oid,
-		//		Time:      t.Time,
-		//		BGMgdl:    123,
-		//		BGSource:  "Sensor",
-		//		Carbs:     nil,
-		//		EnteredBy: nil,
-		//		Insulin:   nil,
-		//		Notes:     nil,
-		//	}, nil
-		//}
+		return &models.Treatment{
+			ID:     t.Oid,
+			Time:   t.Time,
+			Type:   t.Type,
+			Fields: t.fields,
+		}, nil
 	}
 	return nil, models.ErrNotFound
 }

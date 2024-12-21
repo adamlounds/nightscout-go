@@ -63,7 +63,12 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 
 	err = entryRepository.Boot(serverCtx)
 	if err != nil {
-		log.Error("run cannot fetch entries", slog.Any("error", err))
+		log.Error("run cannot load entries", slog.Any("error", err))
+	}
+
+	err = treatmentRepository.Boot(serverCtx)
+	if err != nil {
+		log.Error("run cannot load treatments", slog.Any("error", err))
 	}
 
 	authService := &models.AuthService{AuthRepository: authRepository}

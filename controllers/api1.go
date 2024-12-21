@@ -456,7 +456,7 @@ func (a ApiV1) renderEntryList(w http.ResponseWriter, r *http.Request, entries [
 func (a ApiV1) renderTreatmentList(w http.ResponseWriter, r *http.Request, treatments []models.Treatment) {
 	// treatments are always json, there are too many distinct fields for tsv
 
-	var response []map[string]interface{}
+	response := make([]map[string]interface{}, 0)
 	for _, treatment := range treatments {
 		tTime := treatment.Time
 		var treatmentData = map[string]interface{}{
@@ -478,12 +478,38 @@ func (a ApiV1) renderTreatmentList(w http.ResponseWriter, r *http.Request, treat
 func (a ApiV1) StatusCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{\"status\":\"ok\"}"))
+	w.Write([]byte(`{"status":"ok"}`))
 }
+
 func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("[]"))
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	count, err := strconv.Atoi(r.URL.Query().Get("count"))
+	if err != nil {
+		if r.URL.Query().Get("count") != "" {
+			http.Error(w, "count must be an integer", http.StatusBadRequest)
+			return
+		}
+		count = 20
+	}
+	if count < 1 {
+		http.Error(w, "count must be >= 1", http.StatusBadRequest)
+		return
+	}
+	if count > 50000 {
+		http.Error(w, "count must be <= 50000", http.StatusBadRequest)
+		return
+	}
+
+	treatments, err := a.FetchLatestTreatments(ctx, time.Now(), count)
+	if err != nil {
+		log.Warn("FetchLatestTreatments failed", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	a.renderTreatmentList(w, r, treatments)
 }
 
 // api can be either json or x-www-urlencoded. ns web ui uses form,
@@ -495,10 +521,6 @@ func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {
 // enteredBy=adam&eventType=Carb+Correction&glucoseType=Finger&carbs=10.6&units=mg%2Fdl&eventTime=Mon+Dec+16+2024+15%3A59%3A00+GMT%2B0000+(Greenwich+Mean+Time)&created_at=2024-12-16T15%3A59%3A00.000Z
 // could be `Mon Dec 16 2024 16:25:52 GMT+0000 (heure moyenne de Greenwich)` from a french browser.
 type APIV1TreatmentRequest struct {
-	//GlucoseValue int     `json:"glucoseValue"`
-	//CarbsGiven   int     `json:"carbsGiven"`
-	//InsulinGiven float64 `json:"insulinGiven"`
-	//TreatmentTime  time.Time     `json:"created_at"`
 	Type           string  `json:"eventType"`
 	TimeString     string  `json:"eventTime"`
 	AbsorptionTime int     `json:"absorptionTime,omitempty"` // minutes

@@ -41,8 +41,10 @@ Note that shuggah supports token authentication by sending it in the api-secret 
  - [X] endpoint `GET /api/v1/entries/sgv.json`
  - [X] endpoint `GET /api/v1/treatments/find[created_at][$gt]=<a day ago>` (can return [] for now)
  - [X] endpoint `POST /api/v1/treatments`
- - [ ] endpoint `GET /api/v1/treatments` should return treatments
- - [ ] store treatments in s3, load on boot
+ - [X] endpoint `GET /api/v1/treatments` should return treatments
+ - [X] store treatments in s3, load on boot
+ - [ ] endpoint `DELETE /api/v1/treatments/<_id>` to delete treatments
+ - [ ] endpoint `GET /api/v1/treatments/find[created_at][$gt]=<a day ago>` should filter
 
 
 ##  Next Steps

@@ -37,21 +37,7 @@ func (t *memTreatment) IsAfter(time time.Time) bool {
 	return t.Time.After(time)
 }
 
-type storedTreatment struct {
-	Time        time.Time `json:"dateString"`
-	CreatedTime time.Time `json:"sysTime"`
-	Type        string    `json:"type"`
-	Oid         string    `json:"_id"`
-	fields      map[string]interface{}
-
-	//// Common treatment fields
-	//Insulin   float64 `json:"insulin,omitempty"`
-	//Carbs     int     `json:"carbs,omitempty"`
-	//Duration  int     `json:"duration,omitempty"`
-	//Notes     string  `json:"notes,omitempty"`
-	//EnteredBy string  `json:"enteredBy,omitempty"`
-	//// Additional fields can be added as needed
-}
+type storedTreatment map[string]interface{}
 
 type memTreatmentStore struct {
 	dirtyYears     map[int]struct{} // new memEntry outside of this month: update year file
@@ -88,7 +74,7 @@ func (p BucketTreatmentRepository) Boot(ctx context.Context) error {
 	}
 
 	for _, file := range entryFiles {
-		err := p.fetchTreatments(ctx, file)
+		err := p.loadTreatments(ctx, file)
 		if err != nil {
 			if p.BucketStore.IsObjNotFoundErr(err) {
 				log.Debug("boot: cannot find file (not written yet?)",
@@ -122,7 +108,7 @@ func (p BucketTreatmentRepository) Boot(ctx context.Context) error {
 	return nil
 }
 
-func (p BucketTreatmentRepository) fetchTreatments(ctx context.Context, file string) error {
+func (p BucketTreatmentRepository) loadTreatments(ctx context.Context, file string) error {
 	log := slogctx.FromCtx(ctx)
 	t1 := time.Now()
 	r, err := p.BucketStore.Get(ctx, file)
@@ -144,19 +130,46 @@ func (p BucketTreatmentRepository) fetchTreatments(ctx context.Context, file str
 	p.memTreatmentStore.treatmentsLock.Lock()
 	defer p.memTreatmentStore.treatmentsLock.Unlock()
 	for _, t := range result {
+		tTimeStr, ok := t["created_at"].(string)
+		if !ok {
+			log.Warn("loadTreatments: cannot find time", slog.Any("treatment", t))
+			continue
+		}
+		tTime, err := time.Parse(time.RFC3339, tTimeStr)
+		if err != nil {
+			log.Warn("loadTreatments: cannot parse time", slog.Any("time", t["time"]))
+			continue
+		}
+		tType, ok := t["eventType"].(string)
+		if !ok {
+			log.Warn("loadTreatments: cannot find type", slog.Any("treatment", t))
+			continue
+		}
+		tOid, ok := t["_id"].(string)
+		if !ok {
+			log.Warn("loadTreatments: cannot find _id", slog.Any("treatment", t))
+			continue
+		}
+
+		delete(t, "_id")
+		delete(t, "created_at")
+		delete(t, "eventType")
+
 		p.memTreatmentStore.treatments = append(p.memTreatmentStore.treatments, memTreatment{
-			Time: t.Time,
-			Oid:  t.Oid,
-			Type: t.Type,
-			// ... add other fields as needed
+			Time:   tTime,
+			Oid:    tOid,
+			Type:   tType,
+			fields: t,
 		})
 	}
 	return nil
 }
 
 func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid string) (*models.Treatment, error) {
-	for i := len(p.memTreatmentStore.treatments) - 1; i >= 0; i-- {
-		t := p.memTreatmentStore.treatments[i]
+	memTreatments := p.memTreatmentStore.treatments
+
+	for i := len(memTreatments) - 1; i >= 0; i-- {
+		t := memTreatments[i]
 		if t.Oid != oid {
 			continue
 		}
@@ -168,29 +181,30 @@ func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid 
 			Fields: t.fields,
 		}, nil
 	}
+
 	return nil, models.ErrNotFound
 }
 
 func (p BucketTreatmentRepository) FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error) {
-	var treatments []models.Treatment
-	for i := len(p.memTreatmentStore.treatments) - 1; i >= 0; i-- {
-		t := p.memTreatmentStore.treatments[i]
+	memTreatments := p.memTreatmentStore.treatments
+
+	if len(memTreatments) < maxTreatments {
+		maxTreatments = len(memTreatments)
+	}
+	treatments := make([]models.Treatment, 0, maxTreatments)
+
+	for i := len(memTreatments) - 1; i >= 0; i-- {
+		t := memTreatments[i]
 
 		if t.Time.After(maxTime) {
 			continue
 		}
-		//if t.Type == "BG Check" {
-		//	treatments = append(treatments, models.BGCheckTreatment{
-		//		ID:        t.Oid,
-		//		Time:      t.Time,
-		//		BGMgdl:    123,
-		//		BGSource:  "Sensor",
-		//		Carbs:     nil,
-		//		EnteredBy: nil,
-		//		Insulin:   nil,
-		//		Notes:     nil,
-		//	})
-		//}
+		treatments = append(treatments, models.Treatment{
+			ID:     t.Oid,
+			Time:   t.Time,
+			Type:   t.Type,
+			Fields: t.fields,
+		})
 		if len(treatments) == maxTreatments {
 			break
 		}
@@ -200,22 +214,22 @@ func (p BucketTreatmentRepository) FetchLatestTreatments(ctx context.Context, ma
 
 // syncToBucket will update any bucket objects that have been updated recently.
 func (p BucketTreatmentRepository) syncToBucket(ctx context.Context, currentTime time.Time) {
-	//log := slogctx.FromCtx(ctx)
-	//log.Debug("syncing",
-	//	slog.Time("time", currentTime),
-	//	slog.Bool("dirtyDay", p.memTreatmentStore.dirtyDay),
-	//	slog.Bool("dirtyMonth", p.memTreatmentStore.dirtyMonth),
-	//	slog.Any("dirtyYears", p.memTreatmentStore.dirtyYears),
-	//)
-	//
-	//p.memTreatmentStore.dirtyLock.Lock()
-	//defer p.memTreatmentStore.dirtyLock.Unlock()
-	//p.syncDayToBucket(ctx, currentTime)
-	//p.memTreatmentStore.dirtyDay = false
-	//p.syncMonthToBucket(ctx, currentTime)
-	//p.memTreatmentStore.dirtyMonth = false
-	//p.syncYearsToBucket(ctx, currentTime)
-	//clear(p.memTreatmentStore.dirtyYears)
+	log := slogctx.FromCtx(ctx)
+	log.Debug("syncing treatments",
+		slog.Time("time", currentTime),
+		slog.Bool("dirtyDay", p.memTreatmentStore.dirtyDay),
+		slog.Bool("dirtyMonth", p.memTreatmentStore.dirtyMonth),
+		slog.Any("dirtyYears", p.memTreatmentStore.dirtyYears),
+	)
+
+	p.memTreatmentStore.dirtyLock.Lock()
+	defer p.memTreatmentStore.dirtyLock.Unlock()
+	p.syncDayToBucket(ctx, currentTime)
+	p.memTreatmentStore.dirtyDay = false
+	p.syncMonthToBucket(ctx, currentTime)
+	p.memTreatmentStore.dirtyMonth = false
+	p.syncYearsToBucket(ctx, currentTime)
+	clear(p.memTreatmentStore.dirtyYears)
 }
 
 func (p BucketTreatmentRepository) syncDayToBucket(ctx context.Context, currentTime time.Time) {
@@ -235,12 +249,15 @@ func (p BucketTreatmentRepository) syncDayToBucket(ctx context.Context, currentT
 		if treatment.Time.Before(startOfDay) {
 			continue
 		}
-		dayTreatments = append(dayTreatments, storedTreatment{
-			Oid:  treatment.Oid,
-			Type: treatment.Type,
-			Time: treatment.Time,
-			// ... map other treatment fields
-		})
+		st := storedTreatment{
+			"_id":        treatment.Oid,
+			"created_at": treatment.Time.Format(time.RFC3339),
+			"eventType":  treatment.Type,
+		}
+		for k, v := range treatment.fields {
+			st[k] = v
+		}
+		dayTreatments = append(dayTreatments, st)
 	}
 
 	name := fmt.Sprintf("ns-day/%s-treatments.json", currentTime.Format("2006-01-02"))
@@ -288,12 +305,16 @@ func (p BucketTreatmentRepository) syncMonthToBucket(ctx context.Context, curren
 		if !treatment.Time.Before(startOfDay) {
 			continue
 		}
-		monthTreatments = append(monthTreatments, storedTreatment{
-			Oid:  treatment.Oid,
-			Type: treatment.Type,
-			Time: treatment.Time,
-			// ... map other treatment fields
-		})
+
+		st := storedTreatment{
+			"_id":        treatment.Oid,
+			"created_at": treatment.Time.Format(time.RFC3339),
+			"eventType":  treatment.Type,
+		}
+		for k, v := range treatment.fields {
+			st[k] = v
+		}
+		monthTreatments = append(monthTreatments, st)
 	}
 	name := fmt.Sprintf("ns-month/%s-treatments.json", currentTime.Format("2006-01"))
 	p.writeTreatmentsToBucket(ctx, name, monthTreatments)
@@ -313,19 +334,22 @@ func (p BucketTreatmentRepository) syncYearsToBucket(ctx context.Context, curren
 	startOfYear := time.Date(currentTime.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
 	startOfMonth := time.Date(currentTime.Year(), currentTime.Month(), 1, 0, 0, 0, 0, time.UTC)
 
-	for _, t := range p.memTreatmentStore.treatments {
-		if t.Time.Before(startOfYear) {
+	for _, treatment := range p.memTreatmentStore.treatments {
+		if treatment.Time.Before(startOfYear) {
 			continue
 		}
-		if !t.Time.Before(startOfMonth) {
+		if !treatment.Time.Before(startOfMonth) {
 			continue
 		}
-		yearsTreatments[t.Time.Year()] = append(yearsTreatments[t.Time.Year()], storedTreatment{
-			Oid:  t.Oid,
-			Type: t.Type,
-			Time: t.Time,
-			// ... map other treatment fields
-		})
+		st := storedTreatment{
+			"_id":        treatment.Oid,
+			"created_at": treatment.Time.Format(time.RFC3339),
+			"eventType":  treatment.Type,
+		}
+		for k, v := range treatment.fields {
+			st[k] = v
+		}
+		yearsTreatments[treatment.Time.Year()] = append(yearsTreatments[treatment.Time.Year()], st)
 	}
 	name := fmt.Sprintf("ns-year/%d-treatments.json", currentTime.Year())
 	p.writeTreatmentsToBucket(ctx, name, yearsTreatments[currentTime.Year()])
@@ -335,10 +359,10 @@ func (p BucketTreatmentRepository) CreateTreatments(ctx context.Context, treatme
 	now := time.Now()
 	createdTreatments := p.addTreatmentsToMemStore(ctx, now, treatments)
 
-	//if p.memTreatmentStore.dirtyMonth || p.memTreatmentStore.dirtyDay || len(p.memTreatmentStore.dirtyYears) != 0 {
-	//	syncContext := context.WithoutCancel(ctx)
-	//	go p.syncToBucket(syncContext, now)
-	//}
+	if p.memTreatmentStore.dirtyMonth || p.memTreatmentStore.dirtyDay || len(p.memTreatmentStore.dirtyYears) != 0 {
+		syncContext := context.WithoutCancel(ctx)
+		go p.syncToBucket(syncContext, now)
+	}
 	return createdTreatments
 }
 

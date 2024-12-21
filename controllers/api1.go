@@ -32,6 +32,7 @@ type EntryRepository interface {
 type TreatmentRepository interface {
 	Boot(ctx context.Context) error
 	FetchTreatmentByOid(ctx context.Context, oid string) (*models.Treatment, error)
+	DeleteTreatmentByOid(ctx context.Context, oid string) error
 	FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error)
 	CreateTreatments(ctx context.Context, treatments []models.Treatment) []models.Treatment
 }
@@ -715,4 +716,23 @@ func (a ApiV1) TreatmentByOid(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.renderTreatmentList(w, r, []models.Treatment{*treatment})
+}
+
+func (a ApiV1) DeleteTreatment(w http.ResponseWriter, r *http.Request) {
+	oid := chi.URLParam(r, "oid")
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	err := a.DeleteTreatmentByOid(ctx, oid)
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		log.Warn("cannot delete treatment", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

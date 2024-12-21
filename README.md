@@ -33,18 +33,23 @@ Feasibility study to see if Go-based nightscout would be useful.
 
  - [X] Fetch data from librelinkup every minute = Nightscout menu bar works
  - [ ] Use generated tokens, do not hardcode
-  - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
+ - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
 
 ## Basic shuggah support
 Note that shuggah supports token authentication by sending it in the api-secret header
  - [X] endpoint `GET /api/v1/experiments/test`
  - [X] endpoint `GET /api/v1/entries/sgv.json`
- - [X] endpoint `GET /api/v1/treatments/find[created_at][$gt]=<a day ago>` (can return [] for now)
+ - [X] endpoint `GET /api/v1/treatments?find[created_at][$gt]=<a day ago>` (can return [] for now)
  - [X] endpoint `POST /api/v1/treatments`
  - [X] endpoint `GET /api/v1/treatments` should return treatments
  - [X] store treatments in s3, load on boot
- - [ ] endpoint `DELETE /api/v1/treatments/<_id>` to delete treatments
- - [ ] endpoint `GET /api/v1/treatments/find[created_at][$gt]=<a day ago>` should filter
+ - [X] endpoint `DELETE /api/v1/treatments/<_id>` to delete treatments
+ - [ ] endpoint `PUT /api/v1/treatments/<_id>` to update treatments
+
+## Basic Nightguard support
+ - [ ] support `GET /api/v1/treatments?count=1&find[eventType]=Site+Change` etc
+ - [ ] support `/api/v2/properties`
+ - [ ] support date range (gt/lte) on `GET /api/v1/entries.json`
 
 
 ##  Next Steps

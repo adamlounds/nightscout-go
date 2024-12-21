@@ -100,14 +100,17 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.Use(apiV1mw.SetAuthentication)
 		r.Use(middleware.URLFormat)
 		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries", apiV1C.CreateEntries)
-		r.With(apiV1mw.Authz("api:entries:read")).Post("/treatments", apiV1C.CreateTreatments)
 		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries/import/nightscout", apiV1C.ImportNightscoutEntries)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/sgv", apiV1C.ListSGVs)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/current", apiV1C.LatestEntry)
+
+		r.With(apiV1mw.Authz("api:entries:create")).Post("/treatments", apiV1C.CreateTreatments)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments", apiV1C.ListTreatments)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments/{oid:[a-f0-9]{24}}", apiV1C.TreatmentByOid)
+		r.With(apiV1mw.Authz("api:entries:create")).Delete("/treatments/{oid:[a-f0-9]{24}}", apiV1C.DeleteTreatment)
+
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/experiments/test", apiV1C.StatusCheck)
 	})
 	r.Mount("/debug", middleware.Profiler())

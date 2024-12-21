@@ -5,14 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/adamlounds/nightscout-go/models"
+	slogctx "github.com/veqryn/slog-context"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/adamlounds/nightscout-go/models"
-	slogctx "github.com/veqryn/slog-context"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // TODO look at optimising in-memory usage. There is overlap between Oid
@@ -183,6 +182,51 @@ func (p BucketTreatmentRepository) FetchTreatmentByOid(ctx context.Context, oid 
 	}
 
 	return nil, models.ErrNotFound
+}
+
+func (p BucketTreatmentRepository) DeleteTreatmentByOid(ctx context.Context, oid string) error {
+	log := slogctx.FromCtx(ctx)
+	memTreatments := p.memTreatmentStore.treatments
+
+	for i := len(memTreatments) - 1; i >= 0; i-- {
+		t := memTreatments[i]
+		if t.Oid != oid {
+			continue
+		}
+
+		p.memTreatmentStore.treatments = append(memTreatments[:i], memTreatments[i+1:]...)
+
+		now := time.Now()
+		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		if !t.Time.Before(startOfDay) {
+			if !p.memTreatmentStore.dirtyDay {
+				log.Debug("marking day dirty", slog.Time("deletedTreatmentTime", t.Time))
+				p.memTreatmentStore.dirtyDay = true
+			}
+		} else if !t.Time.Before(startOfMonth) {
+			if !p.memTreatmentStore.dirtyMonth {
+				log.Debug("marking month dirty", slog.Time("deletedTreatmentTime", t.Time))
+				p.memTreatmentStore.dirtyMonth = true
+			}
+		} else {
+			_, ok := p.memTreatmentStore.dirtyYears[t.Time.Year()]
+			if !ok {
+				log.Debug("marking year dirty", slog.Int("year", t.Time.Year()))
+				p.memTreatmentStore.dirtyYears[t.Time.Year()] = struct{}{}
+			}
+		}
+
+		// TODO mark things dirty, trigger save
+
+		// something _must_ be dirty, so trigger sync
+		syncContext := context.WithoutCancel(ctx)
+		go p.syncToBucket(syncContext, now)
+
+		return nil
+	}
+
+	return models.ErrNotFound
 }
 
 func (p BucketTreatmentRepository) FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error) {

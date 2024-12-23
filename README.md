@@ -25,7 +25,7 @@ Feasibility study to see if Go-based nightscout would be useful.
  - [X] Trigger write to s3 on each receipt of new data
  - [X] Support larger bulk-insert. Currently limited to 10,802 entries without batch pg inserts
  - [ ] Ignore duplicate data (same reading, same 30s period -> make nightscoutjs import work)
-   - [ ] Can restart server with librelinkup enabled and we do not get duplicate entries
+   - [X] Can restart server with librelinkup enabled and we do not get duplicate entries
  - [ ] Write completed "backup" files when passing into new month/year
  - [X] Support single-shot import from remote nightscout
 
@@ -33,7 +33,24 @@ Feasibility study to see if Go-based nightscout would be useful.
 
  - [X] Fetch data from librelinkup every minute = Nightscout menu bar works
  - [ ] Use generated tokens, do not hardcode
-  - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
+ - [ ] hardcoded "api:read:entries" token name (derived from API_SECRET) "read-xxx"
+
+## Basic shuggah support
+Note that shuggah supports token authentication by sending it in the api-secret header
+ - [X] endpoint `GET /api/v1/experiments/test`
+ - [X] endpoint `GET /api/v1/entries/sgv.json`
+ - [X] endpoint `GET /api/v1/treatments?find[created_at][$gt]=<a day ago>` (can return [] for now)
+ - [X] endpoint `POST /api/v1/treatments`
+ - [X] endpoint `GET /api/v1/treatments` should return treatments
+ - [X] store treatments in s3, load on boot
+ - [X] endpoint `DELETE /api/v1/treatments/<_id>` to delete treatments
+ - [X] endpoint `PUT /api/v1/treatments/<_id>` to update treatments
+
+## Basic Nightguard support
+ - [ ] support `GET /api/v1/treatments?count=1&find[eventType]=Site+Change` etc
+ - [ ] support `/api/v2/properties`
+ - [ ] support date range (gt/lte) on `GET /api/v1/entries.json`
+
 
 ##  Next Steps
  - [ ] serve bundled front-end
@@ -83,21 +100,23 @@ Regexp used to find Sensor Start/Change entries
 nightguard ios app fetches much more info :)
 
 ```
-"/api/v1/devicestatus.json?count=5"
-"/api/v1/treatments?count=1&find%5BeventType%5D=Temporary%20Target&find%5Bcreated_at%5D%5B$gte%5D=2024-11-05"
-"/api/v1/treatments?count=1&find%5BeventType%5D=Pump%20Battery%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-09-27"
-"/api/v1/treatments?count=1&find%5BeventType%5D=Sensor%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23"
-"/api/v1/treatments?count=1&find%5BeventType%5D=Site%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
-"/api/v2/properties?"
-"/api/v1/treatments.json?"
-"/api/v1/entries.json?find%5Bdate%5D%5B$gt%5D=1730851200000.0&find%5Bdate%5D%5B$lte%5D=1730937600000.0&count=1440"
-"/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-05&find%5BeventType%5D=Temporary%20Target"
-"/api/v1/entries.json?find%5Bdate%5D%5B$gt%5D=1730764800000.0&find%5Bdate%5D%5B$lte%5D=1730851200000.0&count=1440"
-"/api/v1/status.json?"
-"/api/v1/entries.json?find%5Bdate%5D%5B$lte%5D=1730937600000.0&find%5Bdate%5D%5B$gt%5D=1730932773000.0&count=1440"
-"/api/v2/properties?"
-"/api/v1/treatments?find%5BeventType%5D=Site%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-01"
-"/api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-10-23&find%5BeventType%5D=Sensor%20Change"
+GET /api/v1/devicestatus.json?count=5&token=xxx-123
+GET /api/v1/entries.json?count=1440&find%5Bdate%5D%5B$gt%5D=1733875200000.0&find%5Bdate%5D%5B$lte%5D=1733961600000.0&token=xxx-123
+GET /api/v1/entries.json?count=1440&find%5Bdate%5D%5B$gt%5D=1734027035000.0&find%5Bdate%5D%5B$lte%5D=1734048000000.0&token=xxx-123
+GET /api/v1/entries.json?find%5Bdate%5D%5B$gt%5D=1734026975000.0&find%5Bdate%5D%5B$lte%5D=1734048000000.0&count=1440&token=xxx-123
+GET /api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-28&find%5BeventType%5D=Sensor%20Change&token=xxx-123
+GET /api/v1/treatments?count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-28&find%5BeventType%5D=Sensor%20Change&token=xxx-123
+GET /api/v1/treatments?count=1&find%5BeventType%5D=Pump%20Battery%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-11-02&token=xxx-123
+GET /api/v1/treatments?count=1&find%5BeventType%5D=Site%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-12-07&token=xxx-123
+GET /api/v1/treatments?count=1&find%5BeventType%5D=Temporary%20Target&find%5Bcreated_at%5D%5B$gte%5D=2024-12-11&token=xxx-123
+GET /api/v1/treatments?find%5Bcreated_at%5D%5B$gte%5D=2024-12-07&count=1&find%5BeventType%5D=Site%20Change&token=xxx-123
+GET /api/v1/treatments?find%5BeventType%5D=Pump%20Battery%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-11-02&token=xxx-123
+GET /api/v1/treatments?find%5BeventType%5D=Pump%20Battery%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-11-02&count=1&token=xxx-123
+GET /api/v1/treatments?find%5BeventType%5D=Sensor%20Change&find%5Bcreated_at%5D%5B$gte%5D=2024-11-28&count=1&token=xxx-123
+GET /api/v1/treatments?find%5BeventType%5D=Site%20Change&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-12-07&token=xxx-123
+GET /api/v1/treatments?find%5BeventType%5D=Temporary%20Target&count=1&find%5Bcreated_at%5D%5B$gte%5D=2024-12-11&token=xxx-123
+GET /api/v1/treatments.json?token=xxx-123
+GET /api/v2/properties?token=xxx-123
 ```
 
 [Nightscout pro data transfer tool](https://github.com/AndyLow91/nightscout-data-transfer)

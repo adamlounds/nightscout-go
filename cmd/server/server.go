@@ -58,11 +58,17 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 
 	authRepository := repository.NewBucketAuthRepository(cfg.APISecretHash, cfg.DefaultRole)
 	entryRepository := repository.NewBucketEntryRepository(bs)
+	treatmentRepository := repository.NewBucketTreatmentRepository(bs)
 	nightscoutRepository := repository.NewNightscoutRepository()
 
 	err = entryRepository.Boot(serverCtx)
 	if err != nil {
-		log.Error("run cannot fetch entries", slog.Any("error", err))
+		log.Error("run cannot load entries", slog.Any("error", err))
+	}
+
+	err = treatmentRepository.Boot(serverCtx)
+	if err != nil {
+		log.Error("run cannot load treatments", slog.Any("error", err))
 	}
 
 	authService := &models.AuthService{AuthRepository: authRepository}
@@ -79,6 +85,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 
 	apiV1C := controllers.ApiV1{
 		EntryRepository:      entryRepository,
+		TreatmentRepository:  treatmentRepository,
 		NightscoutRepository: nightscoutRepository,
 	}
 	apiV1mw := controllers.ApiV1AuthnMiddleware{
@@ -96,7 +103,16 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.With(apiV1mw.Authz("api:entries:create")).Post("/entries/import/nightscout", apiV1C.ImportNightscoutEntries)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries", apiV1C.ListEntries)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/{oid:[a-f0-9]{24}}", apiV1C.EntryByOid)
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/sgv", apiV1C.ListSGVs)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/current", apiV1C.LatestEntry)
+
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments", apiV1C.ListTreatments)
+		r.With(apiV1mw.Authz("api:entries:create")).Post("/treatments", apiV1C.CreateTreatments)
+		r.With(apiV1mw.Authz("api:entries:create")).Put("/treatments", apiV1C.PutTreatment)
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments/{oid:[a-f0-9]{24}}", apiV1C.TreatmentByOid)
+		r.With(apiV1mw.Authz("api:entries:create")).Delete("/treatments/{oid:[a-f0-9]{24}}", apiV1C.DeleteTreatment)
+
+		r.With(apiV1mw.Authz("api:entries:read")).Get("/experiments/test", apiV1C.StatusCheck)
 	})
 	r.Mount("/debug", middleware.Profiler())
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {

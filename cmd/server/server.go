@@ -106,8 +106,9 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/sgv", apiV1C.ListSGVs)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/entries/current", apiV1C.LatestEntry)
 
-		r.With(apiV1mw.Authz("api:entries:create")).Post("/treatments", apiV1C.CreateTreatments)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments", apiV1C.ListTreatments)
+		r.With(apiV1mw.Authz("api:entries:create")).Post("/treatments", apiV1C.CreateTreatments)
+		r.With(apiV1mw.Authz("api:entries:create")).Put("/treatments", apiV1C.PutTreatment)
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/treatments/{oid:[a-f0-9]{24}}", apiV1C.TreatmentByOid)
 		r.With(apiV1mw.Authz("api:entries:create")).Delete("/treatments/{oid:[a-f0-9]{24}}", apiV1C.DeleteTreatment)
 

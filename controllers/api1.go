@@ -35,6 +35,7 @@ type TreatmentRepository interface {
 	DeleteTreatmentByOid(ctx context.Context, oid string) error
 	FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error)
 	CreateTreatments(ctx context.Context, treatments []models.Treatment) []models.Treatment
+	UpdateTreatmentByOid(ctx context.Context, oid string, treatment *models.Treatment) error
 }
 type AuthRepository interface {
 	GetAPISecretHash(ctx context.Context) string
@@ -726,7 +727,8 @@ func (a ApiV1) DeleteTreatment(w http.ResponseWriter, r *http.Request) {
 	err := a.DeleteTreatmentByOid(ctx, oid)
 	if err != nil {
 		if errors.Is(err, models.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			// shuggah/xDrip will just retry if they get a 404, so return 200 here
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		log.Warn("cannot delete treatment", slog.Any("error", err))
@@ -734,5 +736,64 @@ func (a ApiV1) DeleteTreatment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a ApiV1) PutTreatment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+
+	body, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	//fmt.Printf("%v\n", string(body))
+	var reqTreatment map[string]any
+	err := json.Unmarshal(body, &reqTreatment)
+	if err != nil {
+		log.Info("cannot unmarshal request body - invalid json?", slog.Any("err", err))
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	treatment, err := treatmentFromJSON(ctx, reqTreatment)
+	if err != nil {
+		if errors.Is(err, ErrInvalidTimeString) {
+			log.Info("cannot parse treatment eventTime",
+				slog.Any("eventTime", reqTreatment["eventTime"]),
+				slog.Any("fields", reqTreatment),
+			)
+			http.Error(w, "unparseable treatment eventTime", http.StatusBadRequest)
+			return
+		}
+
+		if errors.Is(err, models.ErrUnknownTreatmentType) {
+			log.Info("unknown treatment type",
+				slog.Any("entryType", reqTreatment["eventType"]),
+				slog.Any("fields", reqTreatment),
+			)
+			http.Error(w, "unknown treatment type", http.StatusBadRequest)
+			return
+		}
+
+		log.Info("invalid treatment",
+			slog.Any("entryType", reqTreatment["eventType"]),
+			slog.Any("err", err),
+			slog.Any("fields", reqTreatment),
+		)
+		http.Error(w, "invalid treatment type", http.StatusBadRequest)
+		return
+	}
+
+	err = a.TreatmentRepository.UpdateTreatmentByOid(ctx, treatment.ID, treatment)
+
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		log.Warn("cannot update treatment", slog.Any("error", err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

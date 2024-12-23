@@ -229,6 +229,75 @@ func (p BucketTreatmentRepository) DeleteTreatmentByOid(ctx context.Context, oid
 	return models.ErrNotFound
 }
 
+func (p BucketTreatmentRepository) UpdateTreatmentByOid(ctx context.Context, oid string, treatment *models.Treatment) error {
+	log := slogctx.FromCtx(ctx)
+	memTreatments := p.memTreatmentStore.treatments
+
+	treatmentsNeedSorting := false
+	for i := len(memTreatments) - 1; i >= 0; i-- {
+		t := memTreatments[i]
+		if t.Oid != oid {
+			continue
+		}
+
+		now := time.Now()
+		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+		// if time has changed we probably need to do more cleanup
+		if t.Time != treatment.Time {
+			treatmentsNeedSorting = true
+			p.markDirty(ctx, startOfMonth, startOfDay, t.Time)
+			t.Time = treatment.Time
+		}
+		t.Type = treatment.Type
+		t.fields = treatment.Fields
+
+		delete(t.fields, "_id")
+		delete(t.fields, "eventType")
+		delete(t.fields, "eventTime")
+		delete(t.fields, "created_at")
+
+		memTreatments[i] = t
+
+		p.markDirty(ctx, startOfMonth, startOfDay, t.Time)
+
+		if treatmentsNeedSorting {
+			t1 := time.Now()
+			slices.SortFunc(p.memTreatmentStore.treatments, func(a, b memTreatment) int { return a.Time.Compare(b.Time) })
+			log.Debug("treatments sorted", slog.Int64("duration_us", time.Since(t1).Microseconds()))
+		}
+
+		// assume a change was made: trigger sync
+		syncContext := context.WithoutCancel(ctx)
+		go p.syncToBucket(syncContext, now)
+
+		return nil
+	}
+
+	return models.ErrNotFound
+}
+func (p BucketTreatmentRepository) markDirty(ctx context.Context, startOfMonth time.Time, startOfDay time.Time, t time.Time) {
+	log := slogctx.FromCtx(ctx)
+	if !t.Before(startOfDay) {
+		if !p.memTreatmentStore.dirtyDay {
+			log.Debug("marking day dirty", slog.Time("t", t))
+			p.memTreatmentStore.dirtyDay = true
+		}
+	} else if !t.Before(startOfMonth) {
+		if !p.memTreatmentStore.dirtyMonth {
+			log.Debug("marking month dirty", slog.Time("t", t))
+			p.memTreatmentStore.dirtyMonth = true
+		}
+	} else {
+		_, ok := p.memTreatmentStore.dirtyYears[t.Year()]
+		if !ok {
+			log.Debug("marking year dirty", slog.Int("year", t.Year()), slog.Time("t", t))
+			p.memTreatmentStore.dirtyYears[t.Year()] = struct{}{}
+		}
+	}
+}
+
 func (p BucketTreatmentRepository) FetchLatestTreatments(ctx context.Context, maxTime time.Time, maxTreatments int) ([]models.Treatment, error) {
 	memTreatments := p.memTreatmentStore.treatments
 

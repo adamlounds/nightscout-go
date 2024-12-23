@@ -44,7 +44,7 @@ Note that shuggah supports token authentication by sending it in the api-secret 
  - [X] endpoint `GET /api/v1/treatments` should return treatments
  - [X] store treatments in s3, load on boot
  - [X] endpoint `DELETE /api/v1/treatments/<_id>` to delete treatments
- - [ ] endpoint `PUT /api/v1/treatments/<_id>` to update treatments
+ - [X] endpoint `PUT /api/v1/treatments/<_id>` to update treatments
 
 ## Basic Nightguard support
  - [ ] support `GET /api/v1/treatments?count=1&find[eventType]=Site+Change` etc

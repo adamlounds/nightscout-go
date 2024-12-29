@@ -172,14 +172,16 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	}
 
 	if len(llugr.Data.ActiveSensors) > 0 {
-		if s.SensorID != llugr.Data.ActiveSensors[0].Sensor.Sn {
-			log.Info("lluStore: new Sensor detected", slog.String("CGMSerialNumber", s.SensorSerial))
+		if s.SensorSerial != llugr.Data.ActiveSensors[0].Sensor.Sn {
+
 			sensor := llugr.Data.ActiveSensors[0].Sensor
-			if s.SensorID != llugr.Data.ActiveSensors[0].Sensor.Sn {
-				s.SensorID = sensor.DeviceID
-				s.SensorSerial = sensor.Sn
-				s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
-			}
+			log.Info("lluStore: new Sensor detected",
+				slog.String("oldSn", s.SensorSerial),
+				slog.String("newSn", sensor.Sn),
+			)
+			s.SensorID = sensor.DeviceID
+			s.SensorSerial = sensor.Sn
+			s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
 		}
 	} else {
 		if s.SensorID != "" {
@@ -189,6 +191,8 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 			s.SensorStartTime = time.Unix(0, 0).UTC()
 		}
 	}
+
+	device := fmt.Sprintf("llu ingestor/%s", llugr.DeviceType())
 
 	now := time.Now().UTC()
 	var entries []models.Entry
@@ -209,7 +213,7 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 			Type:        "sgv",
 			SgvMgdl:     e.ValueInMgPerDl,
 			Time:        eventTime,
-			Device:      "llu ingester",
+			Device:      device,
 			CreatedTime: now,
 		})
 	}
@@ -245,6 +249,7 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 		SgvMgdl:     latestReading.ValueInMgPerDl,
 		Direction:   trendString,
 		Time:        latestTime,
+		Device:      device,
 		CreatedTime: now,
 	})
 
@@ -807,4 +812,20 @@ type lluConnectionsResponse struct {
 		Expires  int    `json:"expires"`
 		Duration int64  `json:"duration"`
 	} `json:"ticket"`
+}
+
+func (llugr *lluGraphResponse) DeviceType() string {
+	switch dtid := llugr.Data.Connection.PatientDevice.Dtid; dtid {
+	case 40066:
+		if llugr.Data.Connection.PatientDevice.Alarms {
+			return "Libre2"
+		}
+		return "Libre1"
+	case 40067:
+		return "Libre2"
+	case 40068:
+		return "Libre3"
+	default:
+		return "Libre"
+	}
 }

@@ -112,6 +112,98 @@ func (s *LLUStore) FetchRecent(ctx context.Context, lastSeen time.Time) ([]model
 
 func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	log := slogctx.FromCtx(ctx)
+	graph, err := s.fetchGraph(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(graph.Data.ActiveSensors) > 0 {
+		if s.SensorSerial != graph.Data.ActiveSensors[0].Sensor.Sn {
+
+			sensor := graph.Data.ActiveSensors[0].Sensor
+			log.Info("lluStore: new Sensor detected",
+				slog.String("oldSn", s.SensorSerial),
+				slog.String("newSn", sensor.Sn),
+			)
+			s.SensorID = sensor.DeviceID
+			s.SensorSerial = sensor.Sn
+			s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
+		}
+	} else {
+		if s.SensorID != "" {
+			log.Warn("lluStore: sensor has expired")
+			s.SensorID = ""
+			s.SensorSerial = ""
+			s.SensorStartTime = time.Unix(0, 0).UTC()
+		}
+	}
+
+	device := fmt.Sprintf("llu ingestor/%s", graph.DeviceType())
+
+	now := time.Now().UTC()
+	var entries []models.Entry
+
+	// historical readings at 15-minute intervals
+	for _, e := range graph.Data.GraphData {
+		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.Timestamp)
+		if err != nil {
+			log.Warn("lluStore graph cannot parse timestamp",
+				slog.Any("err", err),
+				slog.String("timestamp", e.Timestamp),
+			)
+			return nil, ErrUnexpectedDataFormat
+		}
+
+		// nb no trend available for historic data
+		entries = append(entries, models.Entry{
+			Type:        "sgv",
+			SgvMgdl:     e.ValueInMgPerDl,
+			Time:        eventTime,
+			Device:      device,
+			CreatedTime: now,
+		})
+	}
+
+	// latest reading available at 1-minute intervals
+	latestReading := graph.Data.Connection.GlucoseMeasurement
+	if latestReading.Type != 1 {
+		log.Debug("lluStore graph: unexpected measurement type", slog.Any("glucoseMeasurement", latestReading))
+		return nil, ErrUnexpectedDataFormat
+	}
+
+	directionForTrendArrow := map[int]string{
+		0: "NOT COMPUTABLE",
+		1: "SingleDown",
+		2: "FortyFiveDown",
+		3: "Flat",
+		4: "FortyFiveUp",
+		5: "SingleUp",
+	}
+
+	trendString := directionForTrendArrow[latestReading.TrendArrow]
+	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.Timestamp)
+	if err != nil {
+		log.Warn("lluStore graph cannot parse timestamp",
+			slog.Any("err", err),
+			slog.String("timestamp", latestReading.Timestamp),
+		)
+		return nil, ErrUnexpectedDataFormat
+	}
+
+	entries = append(entries, models.Entry{
+		Type:        "sgv",
+		SgvMgdl:     latestReading.ValueInMgPerDl,
+		Direction:   trendString,
+		Time:        latestTime,
+		Device:      device,
+		CreatedTime: now,
+	})
+
+	return entries, nil
+}
+
+func (s *LLUStore) fetchGraph(ctx context.Context) (*graphResponse, error) {
+	log := slogctx.FromCtx(ctx)
 	if s.PatientID == "" {
 		log.Warn("lluStore graph called without PatientID")
 		return nil, fmt.Errorf("PatientID is required")
@@ -159,101 +251,19 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 		return nil, fmt.Errorf("lluStore graph got non-200 response: %w", err)
 	}
 
-	var llugr lluGraphResponse
-	err = json.Unmarshal(body, &llugr)
+	var graphResponse graphResponse
+	err = json.Unmarshal(body, &graphResponse)
 	if err != nil {
 		log.Info("lluStore graph cannot Decode body", slog.Any("err", err))
+		log.Debug("lluStore graph weird json", slog.String("body", string(body)))
 		return nil, ErrUnexpectedDataFormat
 	}
 
-	if llugr.Status != 0 {
-		log.Debug("lluStore graph failed, unexpected status", slog.Int("status", llugr.Status))
+	if graphResponse.Status != 0 {
+		log.Debug("lluStore graph failed, unexpected status", slog.Int("status", graphResponse.Status))
 		return nil, ErrAuthnFailed
 	}
-
-	if len(llugr.Data.ActiveSensors) > 0 {
-		if s.SensorSerial != llugr.Data.ActiveSensors[0].Sensor.Sn {
-
-			sensor := llugr.Data.ActiveSensors[0].Sensor
-			log.Info("lluStore: new Sensor detected",
-				slog.String("oldSn", s.SensorSerial),
-				slog.String("newSn", sensor.Sn),
-			)
-			s.SensorID = sensor.DeviceID
-			s.SensorSerial = sensor.Sn
-			s.SensorStartTime = time.Unix(int64(sensor.A), 0).UTC()
-		}
-	} else {
-		if s.SensorID != "" {
-			log.Warn("lluStore: sensor has expired")
-			s.SensorID = ""
-			s.SensorSerial = ""
-			s.SensorStartTime = time.Unix(0, 0).UTC()
-		}
-	}
-
-	device := fmt.Sprintf("llu ingestor/%s", llugr.DeviceType())
-
-	now := time.Now().UTC()
-	var entries []models.Entry
-
-	// historical readings at 15-minute intervals
-	for _, e := range llugr.Data.GraphData {
-		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.Timestamp)
-		if err != nil {
-			log.Warn("lluStore graph cannot parse timestamp",
-				slog.Any("err", err),
-				slog.String("timestamp", e.Timestamp),
-			)
-			return nil, ErrUnexpectedDataFormat
-		}
-
-		// nb no trend available for historic data
-		entries = append(entries, models.Entry{
-			Type:        "sgv",
-			SgvMgdl:     e.ValueInMgPerDl,
-			Time:        eventTime,
-			Device:      device,
-			CreatedTime: now,
-		})
-	}
-
-	// latest reading available at 1-minute intervals
-	latestReading := llugr.Data.Connection.GlucoseMeasurement
-	if latestReading.Type != 1 {
-		log.Debug("lluStore graph: unexpected measurement type", slog.Any("glucoseMeasurement", latestReading))
-		return nil, ErrUnexpectedDataFormat
-	}
-
-	directionForTrendArrow := map[int]string{
-		0: "NOT COMPUTABLE",
-		1: "SingleDown",
-		2: "FortyFiveDown",
-		3: "Flat",
-		4: "FortyFiveUp",
-		5: "SingleUp",
-	}
-
-	trendString := directionForTrendArrow[latestReading.TrendArrow]
-	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.Timestamp)
-	if err != nil {
-		log.Warn("lluStore graph cannot parse timestamp",
-			slog.Any("err", err),
-			slog.String("timestamp", latestReading.Timestamp),
-		)
-		return nil, ErrUnexpectedDataFormat
-	}
-
-	entries = append(entries, models.Entry{
-		Type:        "sgv",
-		SgvMgdl:     latestReading.ValueInMgPerDl,
-		Direction:   trendString,
-		Time:        latestTime,
-		Device:      device,
-		CreatedTime: now,
-	})
-
-	return entries, nil
+	return &graphResponse, nil
 }
 
 type lluLoginRequest struct {
@@ -341,7 +351,7 @@ func (s *LLUStore) login(ctx context.Context) error {
 		return fmt.Errorf("lluStore got non-200 response: %w", err)
 	}
 
-	var regionRedirectResponse lluLoginRegionRedirectResponse
+	var regionRedirectResponse loginRegionRedirectResponse
 	err = json.Unmarshal(body, &regionRedirectResponse)
 	if err != nil {
 		log.Info("lluStore login cannot unmarshal wrong-region response", slog.Any("err", err),
@@ -447,7 +457,7 @@ func (s *LLUStore) connections(ctx context.Context) error {
 
 	// e25e9a58-8c91-11ef-9073-d6090acef5fa
 
-	var llucr lluConnectionsResponse
+	var llucr connectionsResponse
 	err = json.Unmarshal(body, &llucr)
 	if err != nil {
 		log.Info("lluStore connections cannot Decode body",
@@ -557,7 +567,7 @@ type lluLoginResponse struct {
 	} `json:"data"`
 }
 
-type lluLoginRegionRedirectResponse struct {
+type loginRegionRedirectResponse struct {
 	Status int `json:"status"`
 	Data   struct {
 		Redirect bool   `json:"redirect"`
@@ -565,7 +575,7 @@ type lluLoginRegionRedirectResponse struct {
 	} `json:"data"`
 }
 
-type lluGraphResponse struct {
+type graphResponse struct {
 	Status int `json:"status"`
 	Data   struct {
 		Connection struct {
@@ -709,7 +719,7 @@ type lluGraphResponse struct {
 	} `json:"ticket"`
 }
 
-type lluConnectionsResponse struct {
+type connectionsResponse struct {
 	Status int `json:"status"`
 	Data   []struct {
 		ID         string `json:"id"`
@@ -814,10 +824,10 @@ type lluConnectionsResponse struct {
 	} `json:"ticket"`
 }
 
-func (llugr *lluGraphResponse) DeviceType() string {
-	switch dtid := llugr.Data.Connection.PatientDevice.Dtid; dtid {
+func (gr *graphResponse) DeviceType() string {
+	switch dtid := gr.Data.Connection.PatientDevice.Dtid; dtid {
 	case 40066:
-		if llugr.Data.Connection.PatientDevice.Alarms {
+		if gr.Data.Connection.PatientDevice.Alarms {
 			return "Libre2"
 		}
 		return "Libre1"

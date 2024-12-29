@@ -28,7 +28,9 @@ func New(cfg s3.Config) (*BucketStore, error) {
 	return &BucketStore{Bucket: client}, nil
 }
 
-func (b *BucketStore) Close() {}
+func (b *BucketStore) Close() {
+	// all stores implement Close, this one has nothing to do
+}
 
 func (b *BucketStore) Ping(ctx context.Context) error {
 	_, err := b.Bucket.Exists(ctx, "ping")

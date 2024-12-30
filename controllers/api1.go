@@ -483,6 +483,28 @@ func (a ApiV1) StatusCheck(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+func (a ApiV1) GetStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// spike: hardcoded response
+	w.Write([]byte(`{"status":"ok","name":"nightscout","version":"16.0.0","serverTime":"2024-12-30T13:14:22.499Z","serverTimeEpoch":1735564462499,"apiEnabled":true,"careportalEnabled":true,"boluscalcEnabled":true,"settings":{"units":"mmol","timeFormat":12,"dayStart":7,"dayEnd":21,"nightMode":false,"editMode":true,"showRawbg":"never","customTitle":"Nightscout","theme":"default","alarmUrgentHigh":true,"alarmUrgentHighMins":[30,60,90,120],"alarmHigh":true,"alarmHighMins":[30,60,90,120],"alarmLow":true,"alarmLowMins":[15,30,45,60],"alarmUrgentLow":true,"alarmUrgentLowMins":[15,30,45],"alarmUrgentMins":[30,60,90,120],"alarmWarnMins":[30,60,90,120],"alarmTimeagoWarn":true,"alarmTimeagoWarnMins":15,"alarmTimeagoUrgent":true,"alarmTimeagoUrgentMins":30,"alarmPumpBatteryLow":false,"language":"en","scaleY":"log","showPlugins":"careportal openaps pump iob sage cage delta direction upbat","showForecast":"openaps","focusHours":3,"heartbeat":60,"baseURL":"","authDefaultRoles":"readable devicestatus-upload","thresholds":{"bgHigh":144,"bgTargetTop":126,"bgTargetBottom":70,"bgLow":69},"insecureUseHttp":false,"secureHstsHeader":true,"secureHstsHeaderIncludeSubdomains":false,"secureHstsHeaderPreload":false,"secureCsp":false,"deNormalizeDates":false,"showClockDelta":false,"showClockLastTime":false,"frameUrl1":"","frameUrl2":"","frameUrl3":"","frameUrl4":"","frameUrl5":"","frameUrl6":"","frameUrl7":"","frameUrl8":"","frameName1":"","frameName2":"","frameName3":"","frameName4":"","frameName5":"","frameName6":"","frameName7":"","frameName8":"","authFailDelay":5000,"adminNotifiesEnabled":true,"DEFAULT_FEATURES":["bgnow","delta","direction","timeago","devicestatus","upbat","errorcodes","profile","bolus","dbsize","runtimestate","basal","careportal"],"alarmTypes":["simple"],"enable":["careportal","boluscalc","food","bwp","cage","sage","iage","iob","cob","basal","ar2","rawbg","pushover","bgi","pump","openaps","cors","treatmentnotify","bgnow","delta","direction","timeago","devicestatus","upbat","errorcodes","profile","bolus","dbsize","runtimestate","simplealarms"]},"extendedSettings":{"devicestatus":{"advanced":true,"days":1}},"authorized":null,"runtimeState":"loaded"}`))
+}
+func (a ApiV1) GetAdminnotifies(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// spike: hardcoded response
+	w.Write([]byte(`{"status":200,"message":{"notifies":[],"notifyCount":0}`))
+}
+func (a ApiV1) GetVerifyauth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// spike: hardcoded response
+	w.Write([]byte(`{"status":200,"message":{"canRead":true,"canWrite":false,"isAdmin":false,"message":"UNAUTHORIZED","rolefound":"NOTFOUND","permissions":"DEFAULT"}}`))
+}
+
 func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := slogctx.FromCtx(ctx)

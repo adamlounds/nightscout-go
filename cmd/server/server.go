@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/controllers"
@@ -17,6 +16,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -96,6 +96,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.StripSlashes)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(apiV1mw.SetAuthentication)
 		r.Use(middleware.URLFormat)
@@ -113,21 +114,15 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.With(apiV1mw.Authz("api:entries:create")).Delete("/treatments/{oid:[a-f0-9]{24}}", apiV1C.DeleteTreatment)
 
 		r.With(apiV1mw.Authz("api:entries:read")).Get("/experiments/test", apiV1C.StatusCheck)
+		r.Get("/status", apiV1C.GetStatus)
+		r.Get("/adminnotifies", apiV1C.GetAdminnotifies)
+		r.Get("/verifyauth", apiV1C.GetVerifyauth)
 	})
 	r.Mount("/debug", middleware.Profiler())
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		entry, err := entryRepository.FetchLatestSgvEntry(r.Context(), time.Now())
-		if err != nil {
-			if errors.Is(err, models.ErrNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			log.Info("entryService.ByID failed", slog.Any("error", err))
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write([]byte(fmt.Sprintf("%#v", entry))) //nolint:errcheck
-	})
+
+	workDir, _ := os.Getwd()
+	filesDir := http.Dir(filepath.Join(workDir, "dist"))
+	FileServer(r, "/", filesDir)
 
 	// TODO look at how to prevent shutdown if s3 writes are in-progress?
 	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
@@ -158,6 +153,27 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	}
 	log.Info("shutdown ok")
 	<-serverCtx.Done()
+}
+
+// FileServer conveniently sets up a http.FileServer handler to serve
+// static files from a http.FileSystem.
+func FileServer(r chi.Router, path string, root http.FileSystem) {
+	if strings.ContainsAny(path, "{}*") {
+		panic("FileServer does not permit any URL parameters.")
+	}
+
+	if path != "/" && path[len(path)-1] != '/' {
+		r.Get(path, http.RedirectHandler(path+"/", 301).ServeHTTP)
+		path += "/"
+	}
+	path += "*"
+
+	r.Get(path, func(w http.ResponseWriter, r *http.Request) {
+		rctx := chi.RouteContext(r.Context())
+		pathPrefix := strings.TrimSuffix(rctx.RoutePattern(), "/*")
+		fs := http.StripPrefix(pathPrefix, http.FileServer(root))
+		fs.ServeHTTP(w, r)
+	})
 }
 
 func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {

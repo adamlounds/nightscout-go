@@ -164,22 +164,6 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	filesDir := http.Dir(filepath.Join(workDir, "dist"))
 	FileServer(r, "/", filesDir)
 
-	// Play/Spike/Proof-of-concept: send a message to all authenticated socketio connections every 20s.
-	broadcastTicker := time.NewTicker(20 * time.Second)
-	broadcastDone := make(chan bool)
-
-	go func() {
-		for {
-			select {
-			case <-broadcastDone:
-				return
-			case t := <-broadcastTicker.C:
-				log.Debug("broadcast tick", slog.Time("time", t))
-				sockSvr.BroadcastToRoom("/", "myRoom", "broadcastEvent", "event payload")
-			}
-		}
-	}()
-
 	// TODO look at how to prevent shutdown if s3 writes are in-progress?
 	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
 
@@ -194,9 +178,6 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 				log.Error("graceful shutdown timed out, forcing exit")
 			}
 		}()
-
-		broadcastTicker.Stop()
-		broadcastDone <- true
 
 		err := server.Shutdown(shutdownCtx)
 		if err != nil {
@@ -257,8 +238,26 @@ func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryR
 			select {
 			case <-ticker.C:
 				log.Debug("ingester tick")
-				ingestOnce(ctx, entryRepository, cgm)
-				sockSvr.BroadcastToRoom("/", "myRoom", "ingestEvent", "event payload")
+				newEntry := ingestOnce(ctx, entryRepository, cgm)
+				if newEntry != nil {
+					sockSvr.BroadcastToRoom("/", "myRoom", "dataUpdate",
+						map[string]interface{}{
+							"delta":       true,
+							"lastUpdated": newEntry.Time.UnixMilli(),
+							"sgvs": []any{
+								map[string]interface{}{
+									"_id":       newEntry.Oid,
+									"mgdl":      newEntry.SgvMgdl,
+									"mills":     newEntry.Time.UnixMilli(),
+									"device":    newEntry.Device,
+									"direction": newEntry.Direction,
+									"type":      "sgv",
+								},
+							},
+						},
+					)
+
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -266,7 +265,7 @@ func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryR
 	}()
 }
 
-func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
+func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) *models.Entry {
 	log := slogctx.FromCtx(ctx)
 
 	var mostRecentEntryTime time.Time
@@ -282,12 +281,12 @@ func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepo
 		} else {
 			log.Warn("llu cannot fetch entries", slog.Any("error", err))
 		}
-		return
+		return nil
 	}
 	insertedEntries := entryRepository.CreateEntries(ctx, newEntries)
 	if len(insertedEntries) == 0 {
 		log.Info("ingester: no new entries")
-		return
+		return nil
 	}
 
 	newestEntry := insertedEntries[len(insertedEntries)-1]
@@ -296,6 +295,7 @@ func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepo
 		slog.Time("previousNewestEntryTime", mostRecentEntryTime),
 		slog.Time("newestEntryTime", newestEntry.Time),
 	)
+	return &newestEntry
 }
 
 type SockIDGenerator struct{}

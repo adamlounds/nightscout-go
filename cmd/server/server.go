@@ -10,6 +10,11 @@ import (
 	bucketstore "github.com/adamlounds/nightscout-go/stores/bucket"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	socketio "github.com/googollee/go-socket.io"
+	"github.com/googollee/go-socket.io/engineio"
+	"github.com/googollee/go-socket.io/engineio/transport"
+	"github.com/googollee/go-socket.io/engineio/transport/polling"
+	"github.com/oklog/ulid/v2"
 	slogctx "github.com/veqryn/slog-context"
 	"log/slog"
 	"net/http"
@@ -79,10 +84,6 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		Password: os.Getenv("LINK_UP_PASSWORD"),
 	})
 
-	if cgm.IsConfigured() {
-		startIngestor(serverCtx, entryRepository, cgm)
-	}
-
 	apiV1C := controllers.ApiV1{
 		EntryRepository:      entryRepository,
 		TreatmentRepository:  treatmentRepository,
@@ -90,6 +91,44 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	}
 	apiV1mw := controllers.ApiV1AuthnMiddleware{
 		AuthService: authService,
+	}
+
+	// nb polling transport flushes (ie sends response even if there's no data)
+	// every PingInterval
+	sockIDGenerator := &SockIDGenerator{}
+	sockSvr := socketio.NewServer(&engineio.Options{
+		SessionIDGenerator: sockIDGenerator,
+		PingInterval:       25 * time.Second,
+		PingTimeout:        60 * time.Second,
+		Transports: []transport.Transport{
+			// NB websocket transport currently disabled during development,
+			// as it's not playing nicely with my proxy setup
+			&polling.Transport{
+				//CheckOrigin: allowOriginFunc,
+			},
+		},
+	})
+	socketController := controllers.SocketController{
+		Context:              ctx,
+		SockSvr:              sockSvr,
+		EntryRepository:      entryRepository,
+		TreatmentRepository:  treatmentRepository,
+		NightscoutRepository: nightscoutRepository,
+	}
+
+	sockSvr.OnConnect("/", socketController.OnConnect)
+	sockSvr.OnDisconnect("/", socketController.OnDisconnect)
+	sockSvr.OnError("/", socketController.OnError)
+	sockSvr.OnEvent("/", "authorize", socketController.Authorize)
+	sockSvr.OnEvent("/", "loadRetro", socketController.LoadRetro)
+	sockSvr.OnEvent("/alarm", "", socketController.Alarm)
+
+	go sockSvr.Serve()
+	defer sockSvr.Close()
+
+	// ingestor can trigger events
+	if cgm.IsConfigured() {
+		startIngestor(serverCtx, entryRepository, sockSvr, cgm)
 	}
 
 	r := chi.NewRouter()
@@ -119,10 +158,27 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		r.Get("/verifyauth", apiV1C.GetVerifyauth)
 	})
 	r.Mount("/debug", middleware.Profiler())
+	r.Mount("/socket.io", sockSvr)
 
 	workDir, _ := os.Getwd()
 	filesDir := http.Dir(filepath.Join(workDir, "dist"))
 	FileServer(r, "/", filesDir)
+
+	// Play/Spike/Proof-of-concept: send a message to all authenticated socketio connections every 20s.
+	broadcastTicker := time.NewTicker(20 * time.Second)
+	broadcastDone := make(chan bool)
+
+	go func() {
+		for {
+			select {
+			case <-broadcastDone:
+				return
+			case t := <-broadcastTicker.C:
+				log.Debug("broadcast tick", slog.Time("time", t))
+				sockSvr.BroadcastToRoom("/", "myRoom", "broadcastEvent", "event payload")
+			}
+		}
+	}()
 
 	// TODO look at how to prevent shutdown if s3 writes are in-progress?
 	server := &http.Server{Addr: cfg.Server.Address, Handler: r}
@@ -139,10 +195,21 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 			}
 		}()
 
+		broadcastTicker.Stop()
+		broadcastDone <- true
+
 		err := server.Shutdown(shutdownCtx)
 		if err != nil {
 			log.Error("cannot shutdown server", slog.Any("error", err))
 		}
+		log.Info("http server shutdown complete")
+
+		err = sockSvr.Close()
+		if err != nil {
+			log.Error("cannot close socketio server", slog.Any("error", err))
+		}
+		log.Info("socketio server shutdown complete")
+
 		serverStopCtx()
 	}()
 
@@ -151,7 +218,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server terminated", slog.Any("error", err))
 	}
-	log.Info("shutdown ok")
+	log.Info("shutting down")
 	<-serverCtx.Done()
 }
 
@@ -176,7 +243,7 @@ func FileServer(r chi.Router, path string, root http.FileSystem) {
 	})
 }
 
-func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryRepository, cgm *repository.CGMLibrelinkupRepository) {
+func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryRepository, sockSvr *socketio.Server, cgm *repository.CGMLibrelinkupRepository) {
 	log := slogctx.FromCtx(ctx)
 
 	ingestOnce(ctx, entryRepository, cgm)
@@ -191,6 +258,7 @@ func startIngestor(ctx context.Context, entryRepository *repository.BucketEntryR
 			case <-ticker.C:
 				log.Debug("ingester tick")
 				ingestOnce(ctx, entryRepository, cgm)
+				sockSvr.BroadcastToRoom("/", "myRoom", "ingestEvent", "event payload")
 			case <-ctx.Done():
 				return
 			}
@@ -228,4 +296,10 @@ func ingestOnce(ctx context.Context, entryRepository *repository.BucketEntryRepo
 		slog.Time("previousNewestEntryTime", mostRecentEntryTime),
 		slog.Time("newestEntryTime", newestEntry.Time),
 	)
+}
+
+type SockIDGenerator struct{}
+
+func (g *SockIDGenerator) NewID() string {
+	return ulid.Make().String()
 }

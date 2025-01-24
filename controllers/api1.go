@@ -495,7 +495,7 @@ func (a ApiV1) GetAdminnotifies(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	// spike: hardcoded response
-	w.Write([]byte(`{"status":200,"message":{"notifies":[],"notifyCount":0}`))
+	w.Write([]byte(`{"status":200,"message":{"notifies":[],"notifyCount":0}}`))
 }
 func (a ApiV1) GetVerifyauth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

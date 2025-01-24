@@ -193,6 +193,6 @@ func (c SocketController) OnError(s socketio.Conn, e error) {
 
 func (c SocketController) OnDisconnect(s socketio.Conn, reason string) {
 	// Add the Remove session id. Fixed the connection & mem leak
-	c.SockSvr.Remove(s.ID())
+	//c.SockSvr.Remove(s.ID())
 	fmt.Println("closed", reason)
 }

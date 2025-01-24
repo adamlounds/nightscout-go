@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/go-chi/render v1.0.3
 	github.com/go-kit/log v0.2.1
-	github.com/googollee/go-socket.io v1.8.0-rc.1.0.20240929151546-fbcd91a9ca30
+	github.com/googollee/go-socket.io v1.7.0
 	github.com/oklog/ulid/v2 v2.1.0
 	github.com/stretchr/testify v1.9.0
 	github.com/thanos-io/objstore v0.0.0-20241111205755-d1dd89d41f97
@@ -38,11 +38,11 @@ require (
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect
-	github.com/gofrs/uuid v4.4.0+incompatible // indirect
+	github.com/gofrs/uuid v4.0.0+incompatible // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/gomodule/redigo v1.8.9 // indirect
+	github.com/gomodule/redigo v1.8.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
@@ -57,7 +57,6 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/crypto v0.28.0 // indirect
-	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/net v0.30.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect

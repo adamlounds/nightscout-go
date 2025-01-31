@@ -4,3 +4,4 @@ ns-go
 .env
 cover.html
 coverage.out
+dist

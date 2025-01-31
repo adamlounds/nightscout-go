@@ -231,6 +231,7 @@ func (s *LLUStore) fetchGraph(ctx context.Context) (*graphResponse, error) {
 		log.Info("lluStore graph cannot Do req", slog.Any("err", err))
 		return nil, fmt.Errorf("lluStore graph cannot Do req: %w", err)
 	}
+	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
 	log.Debug("lluStore graph got response",
 		slog.Int("code", res.StatusCode),

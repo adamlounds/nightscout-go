@@ -99,7 +99,7 @@ func (p BucketTreatmentRepository) Boot(ctx context.Context) error {
 	if len(p.memTreatmentStore.treatments) > 0 {
 		mostRecentTime = p.memTreatmentStore.treatments[len(p.memTreatmentStore.treatments)-1].Time
 	}
-	log.Info("boot: all entries loaded",
+	log.Info("boot: all treatments loaded",
 		slog.Int("numEntries", len(p.memTreatmentStore.treatments)),
 		slog.Time("mostRecentTreatmentTime", mostRecentTime),
 	)

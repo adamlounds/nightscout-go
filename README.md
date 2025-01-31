@@ -1,6 +1,8 @@
 # Nightscout-go
 Feasibility study to see if Go-based nightscout would be useful.
 
+Based on [nightscout web monitor](https://github.com/nightscout/cgm-remote-monitor)
+
 ## Aims
 - can we lose the mongo dependency?
 - Does it use less RAM/CPU?

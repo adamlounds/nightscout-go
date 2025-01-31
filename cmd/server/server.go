@@ -126,7 +126,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	go sockSvr.Serve()
 	defer sockSvr.Close()
 
-	// ingestor can trigger events
+	// ingestor can trigger events, so we pass the sockSvr in
 	if cgm.IsConfigured() {
 		startIngestor(serverCtx, entryRepository, sockSvr, cgm)
 	}

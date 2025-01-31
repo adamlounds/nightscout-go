@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	repository "github.com/adamlounds/nightscout-go/adapters"
+	"github.com/adamlounds/nightscout-go/middleware"
 	"github.com/adamlounds/nightscout-go/models"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
 	slogctx "github.com/veqryn/slog-context"
 	"io"
@@ -137,7 +138,7 @@ func (a ApiV1) LatestEntry(w http.ResponseWriter, r *http.Request) {
 
 func (a ApiV1) urlFormat(r *http.Request) string {
 	ctx := r.Context()
-	urlFormat, _ := ctx.Value(middleware.URLFormatCtxKey).(string)
+	urlFormat, _ := ctx.Value(chimiddleware.URLFormatCtxKey).(string)
 	if urlFormat != "" {
 		return urlFormat
 	}
@@ -498,11 +499,53 @@ func (a ApiV1) GetAdminnotifies(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":200,"message":{"notifies":[],"notifyCount":0}}`))
 }
 func (a ApiV1) GetVerifyauth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+	authn := middleware.GetAuthn(ctx)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	// spike: hardcoded response
-	w.Write([]byte(`{"status":200,"message":{"canRead":true,"canWrite":false,"isAdmin":false,"message":"UNAUTHORIZED","rolefound":"NOTFOUND","permissions":"DEFAULT"}}`))
+	if authn == nil {
+		log.Debug("verifyauth: not authenticated")
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		w.Write([]byte(`{"status":200,"message":{"canRead":true,"canWrite":false,"isAdmin":false,"message":"UNAUTHORIZED","rolefound":"NOTFOUND","permissions":"DEFAULT"}}`))
+		return
+	}
+	canRead := authn.IsPermitted(ctx, "*:*:read")
+	canWrite := authn.IsPermitted(ctx, "*:*:write")
+	isAdmin := authn.IsPermitted(ctx, "*")
+	isAuthorized := canRead && !authn.AuthSubject.IsAnonymous()
+
+	message := "UNAUTHORIZED"
+	if isAuthorized {
+		message = "OK"
+	}
+
+	permissions := "DEFAULT"
+	if !authn.AuthSubject.IsAnonymous() {
+		permissions = "ROLE"
+	}
+
+	// mirroring nightscout's observed behaviour: admin is NOTFOUND
+	rolefound := "FOUND"
+	if authn.AuthSubject.IsAnonymous() || authn.AuthSubject.Name == "admin" {
+		rolefound = "NOTFOUND"
+	}
+
+	response := map[string]interface{}{
+		"status": 200,
+		"message": map[string]interface{}{
+			"canRead":     canRead,
+			"canWrite":    canWrite,
+			"isAdmin":     isAdmin,
+			"message":     message,
+			"rolefound":   rolefound,
+			"permissions": permissions,
+		},
+	}
+
+	render.JSON(w, r, response)
 }
 
 func (a ApiV1) ListTreatments(w http.ResponseWriter, r *http.Request) {

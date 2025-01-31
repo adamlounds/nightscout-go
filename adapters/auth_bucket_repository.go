@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/adamlounds/nightscout-go/models"
 	slogctx "github.com/veqryn/slog-context"
+	"log/slog"
 	"strings"
 )
 
@@ -24,17 +25,38 @@ func (p BucketAuthRepository) GetDefaultRole(ctx context.Context) string {
 	return p.DefaultRole
 }
 
-var unknownAuthSubject = &models.AuthSubject{Name: "anonymous", RoleNames: []string{}}
+var unknownSubject = &models.AuthSubject{Name: "anonymous", RoleNames: []string{}}
 
-func (p BucketAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, authToken string) *models.AuthSubject {
+var subjectsByToken = map[string]*models.AuthSubject{
+	"ffs-358de43470f328f3": {
+		Name:      "ffs",
+		RoleNames: []string{"cgm-uploader", "readable"},
+	},
+	"-38ff267ebbec81e1": {
+		Name:      "çåƒé",
+		RoleNames: []string{"cgm-uploader"},
+	},
+	"admin-c1f54efaedccba11": {
+		Name:      "A.D.Min",
+		RoleNames: []string{"admin"},
+	},
+}
+
+var tokensByHash = map[string]string{
+	"b9e80b4cae356572fc11e40fd68b6de6c7fa995c": "ffs-358de43470f328f3",
+	"a62e1ed038ae13505860ebf0756abf733e5825e1": "-38ff267ebbec81e1",
+	"f6c0ba8c0f3a96a6a593800b71cc0590fbedf2e4": "admin-c1f54efaedccba11",
+}
+
+func (p BucketAuthRepository) FetchSubjectByToken(ctx context.Context, token string) *models.AuthSubject {
 	log := slogctx.FromCtx(ctx)
-	if authToken == "" {
-		return unknownAuthSubject
+	if token == "" {
+		return unknownSubject
 	}
-	_, _, found := strings.Cut(authToken, "-")
+	_, _, found := strings.Cut(token, "-")
 	if !found {
 		log.Debug("auth token is invalid, should be name-hash")
-		return unknownAuthSubject
+		return unknownSubject
 	}
 
 	// TODO persist. Note we must store Name so caps/hyphens/non-ascii are kept
@@ -53,12 +75,40 @@ func (p BucketAuthRepository) FetchAuthSubjectByAuthToken(ctx context.Context, a
 		},
 	}
 
-	authSubject, ok := hashes[authToken]
+	authSubject, ok := hashes[token]
 	if !ok {
 		log.Debug("auth token not recognized")
-		return unknownAuthSubject
+		return unknownSubject
 	}
 	return authSubject
+}
+
+func (p BucketAuthRepository) FetchSubjectByHash(ctx context.Context, hash string) *models.AuthSubject {
+	log := slogctx.FromCtx(ctx)
+	if hash == "" {
+		return unknownSubject
+	}
+	if len(hash) != 40 {
+		log.Debug("hash is invalid, should be 40 chars", slog.String("hash", hash))
+		return unknownSubject
+	}
+
+	token, ok := tokensByHash[hash]
+	if !ok {
+		log.Debug("hash not recognized", slog.String("hash", hash))
+		return unknownSubject
+	}
+
+	authSubject, ok := subjectsByToken[token]
+	if !ok {
+		log.Warn("hash-derived token not found???")
+		return unknownSubject
+	}
+	return authSubject
+}
+
+func (p BucketAuthRepository) FetchAllRoles(ctx context.Context) []*models.Role {
+	return []*models.Role{}
 }
 
 // Decision for future: roles and AuthSubjects should be cached (they are in ns-js)

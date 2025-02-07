@@ -40,7 +40,7 @@ func (a ApiV1AuthnMiddleware) Authz(requiredRole string) func(http.Handler) http
 			authn := middleware.GetAuthn(ctx)
 			log.Debug("Authzmw got authn from ctx", slog.Any("authn", authn), slog.String("requiredRole", requiredRole))
 
-			if a.IsPermitted(ctx, authn, requiredRole) {
+			if authn.IsPermitted(ctx, requiredRole) {
 				log.Debug("Authzmw ok", slog.String("requiredRole", requiredRole))
 				next.ServeHTTP(w, r)
 			} else {

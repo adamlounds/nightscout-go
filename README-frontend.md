@@ -15,9 +15,15 @@ cd -
 
 mv ../cgm-remote-monitor/frontend/dist ./
 cp -r ../cgm-remote-monitor/frontend/translations ./dist/
-
-vi dist/index.html
-# change to <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
 ```
 
+change to `<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>`
+in
+```
+dist/index.html
+dist/admin/index.html
+dist/food/index.html
+dist/profile/index.html
+dist/report/index.html
+```
 You should now be able to start the server via `go run cmd/server/server.go`

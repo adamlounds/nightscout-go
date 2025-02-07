@@ -491,3 +491,87 @@ func TestApiV1_ListEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestApiV1_renderTreatmentList(t *testing.T) {
+	tests := []struct {
+		name           string
+		treatments     []models.Treatment
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "empty treatment list",
+			treatments:     []models.Treatment{},
+			expectedStatus: http.StatusOK,
+			expectedBody:   "[]",
+		},
+		{
+			name: "single treatment",
+			treatments: []models.Treatment{
+				{
+					ID:   "treatment-123",
+					Time: time.Date(2024, 3, 1, 12, 0, 1, 2, time.UTC),
+					Fields: map[string]interface{}{
+						"eventType": "Meal Bolus",
+						"insulin":   5.5,
+						"carbs":     45,
+						"notes":     "Lunch",
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: `[{"_id":"treatment-123","eventType":"Meal Bolus",
+				"created_at":"2024-03-01T12:00:01.000Z", "mills":1709294401000,
+				"insulin":5.5,"carbs":45,"notes":"Lunch"}]`,
+		},
+		{
+			name: "multiple treatments with different field combinations",
+			treatments: []models.Treatment{
+				{
+					ID:   "treatment-123",
+					Time: time.Date(2024, 3, 1, 12, 1, 2, 654321, time.UTC),
+					Fields: map[string]interface{}{
+						"eventType": "Meal Bolus",
+						"insulin":   5.5,
+						"carbs":     45,
+						"notes":     "Lunch",
+					},
+				},
+				{
+					ID:   "treatment-124",
+					Time: time.Date(2024, 3, 1, 15, 30, 3, 987654321, time.UTC),
+					Fields: map[string]interface{}{
+						"eventType": "Correction Bolus",
+						"insulin":   1.5,
+						"notes":     "High glucose correction",
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: `[{"_id":"treatment-123","eventType":"Meal Bolus",
+				"created_at":"2024-03-01T12:01:02.000Z","mills":1709294462000,
+				"insulin":5.5,"carbs":45,"notes":"Lunch"},
+				{"_id":"treatment-124","eventType":"Correction Bolus",
+				"created_at":"2024-03-01T15:30:03.987Z", "mills":1709307003987,
+				"insulin":1.5,"notes":"High glucose correction"}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &ApiV1{}
+
+			// Create request and response recorder
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/treatments", nil)
+			req = req.WithContext(contextWithSilentLogger())
+			w := httptest.NewRecorder()
+
+			// Execute request
+			api.renderTreatmentList(w, req, tt.treatments)
+
+			// Check response
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			assert.JSONEq(t, tt.expectedBody, w.Body.String())
+		})
+	}
+}

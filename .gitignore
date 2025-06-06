@@ -5,3 +5,5 @@ ns-go
 cover.html
 coverage.out
 dist
+
+.qodo

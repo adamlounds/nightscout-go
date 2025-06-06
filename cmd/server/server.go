@@ -3,6 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
 	repository "github.com/adamlounds/nightscout-go/adapters"
 	"github.com/adamlounds/nightscout-go/config"
 	"github.com/adamlounds/nightscout-go/controllers"
@@ -16,15 +26,6 @@ import (
 	"github.com/googollee/go-socket.io/engineio/transport/polling"
 	"github.com/oklog/ulid/v2"
 	slogctx "github.com/veqryn/slog-context"
-	"log/slog"
-	"net/http"
-	_ "net/http/pprof"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
-	"syscall"
-	"time"
 )
 
 func main() {
@@ -84,15 +85,6 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 		Password: os.Getenv("LINK_UP_PASSWORD"),
 	})
 
-	apiV1C := controllers.ApiV1{
-		EntryRepository:      entryRepository,
-		TreatmentRepository:  treatmentRepository,
-		NightscoutRepository: nightscoutRepository,
-	}
-	apiV1mw := controllers.ApiV1AuthnMiddleware{
-		AuthService: authService,
-	}
-
 	// nb polling transport flushes (ie sends response even if there's no data)
 	// every PingInterval
 	sockIDGenerator := &SockIDGenerator{}
@@ -122,6 +114,7 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	sockSvr.OnEvent("/", "authorize", socketController.Authorize)
 	sockSvr.OnEvent("/", "loadRetro", socketController.LoadRetro)
 	sockSvr.OnEvent("/alarm", "", socketController.Alarm)
+	sockSvr.OnEvent("/alarm", "subscribe", socketController.AlarmSubscribe)
 
 	go sockSvr.Serve()
 	defer sockSvr.Close()
@@ -129,6 +122,18 @@ func run(ctx context.Context, cfg config.ServerConfig) {
 	// ingestor can trigger events, so we pass the sockSvr in
 	if cgm.IsConfigured() {
 		startIngestor(serverCtx, entryRepository, sockSvr, cgm)
+	}
+
+	// api controllers need sockSvr so they can trigger notifications when
+	// treatments entered etc
+	apiV1C := controllers.ApiV1{
+		EntryRepository:      entryRepository,
+		TreatmentRepository:  treatmentRepository,
+		NightscoutRepository: nightscoutRepository,
+		SockSvr:              sockSvr,
+	}
+	apiV1mw := controllers.ApiV1AuthnMiddleware{
+		AuthService: authService,
 	}
 
 	r := chi.NewRouter()

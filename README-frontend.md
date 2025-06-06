@@ -27,3 +27,5 @@ dist/profile/index.html
 dist/report/index.html
 ```
 You should now be able to start the server via `go run cmd/server/server.go`
+
+BUGS: sw.js not found :(

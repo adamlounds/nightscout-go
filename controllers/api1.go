@@ -14,6 +14,7 @@ import (
 	slogctx "github.com/veqryn/slog-context"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -48,10 +49,15 @@ type NightscoutRepository interface {
 	FetchAllEntries(ctx context.Context, nsCfg repository.NightscoutConfig) ([]models.Entry, error)
 }
 
+type SockSvr interface {
+	BroadcastToRoom(namespace string, room, event string, args ...interface{}) bool
+}
+
 type ApiV1 struct {
 	EntryRepository
 	TreatmentRepository
 	NightscoutRepository
+	SockSvr
 }
 
 type APIV1EntryResponse struct {
@@ -611,13 +617,112 @@ type APIV1TreatmentRequest struct {
 	IsAnnouncement bool    `json:"isAnnouncement,omitempty"`
 }
 
+// CreateTreatments handles the creation of treatment records
+// Supports both json and x-www-form-urlencoded based on content-type.
 func (a ApiV1) CreateTreatments(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength == 0 {
+		http.Error(w, "Content-Length must be > 0", http.StatusBadRequest)
+		return
+	}
+
+	ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		http.Error(w, "Bad Content-Type", http.StatusBadRequest)
+		return
+	}
+	ct = strings.ToLower(ct)
+
+	if ct == "application/json" {
+		a.createTreatmentsFromJSON(w, r)
+		return
+	} else if ct == "application/x-www-form-urlencoded" {
+		a.createTreatmentFromForm(w, r)
+		return
+	}
+
+	http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+	return
+}
+
+func (a ApiV1) createTreatmentFromForm(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := slogctx.FromCtx(ctx)
+	r.ParseForm()
+
+	reqTreatment := make(map[string]any, len(r.Form))
+	for k, v := range r.Form {
+		reqTreatment[k] = v[0]
+	}
+	treatment, err := treatmentFromJSON(ctx, reqTreatment)
+
+	if err != nil {
+		if errors.Is(err, ErrInvalidTimeString) {
+			log.Info("cannot parse treatment eventTime",
+				slog.Any("eventTime", reqTreatment["eventTime"]),
+				slog.Any("fields", reqTreatment),
+			)
+			http.Error(w, "unparseable treatment eventTime", http.StatusBadRequest)
+			return
+		}
+
+		if errors.Is(err, models.ErrUnknownTreatmentType) {
+			log.Info("unknown treatment type",
+				slog.Any("entryType", reqTreatment["eventType"]),
+				slog.Any("fields", reqTreatment),
+			)
+			http.Error(w, "unknown treatment type", http.StatusBadRequest)
+			return
+		}
+
+		log.Info("invalid treatment",
+			slog.Any("entryType", reqTreatment["eventType"]),
+			slog.Any("err", err),
+			slog.Any("fields", reqTreatment),
+		)
+		http.Error(w, "invalid treatment type", http.StatusBadRequest)
+		return
+	}
+
+	log.Info("req received", slog.Any("req", treatment))
+
+	treatments := []models.Treatment{*treatment}
+	insertedTreatments := a.TreatmentRepository.CreateTreatments(ctx, treatments)
+
+	a.SockSvr.BroadcastToRoom("/", "myRoom", "dataUpdate",
+		map[string]interface{}{
+			"delta":       true,
+			"lastUpdated": treatment.Time.UnixMilli(),
+			"treatments":  insertedTreatments,
+		},
+	)
+	a.SockSvr.BroadcastToRoom("/alarm", "myRoom", "notification",
+		map[string]interface{}{
+			"level":   0,
+			"title":   "BG Check",
+			"message": "BG: 8 (Sensor)\nEntered By: adam\nNotes: test",
+			"plugin": map[string]interface{}{
+				"name":       "treatmentnotify",
+				"label":      "Treatment Notifications",
+				"pluginType": "notification",
+				"enabled":    true,
+			},
+			"notifyhash": "3e393b83dbd9f6bc815536b4246255a48c4d0110",
+			"group":      "default",
+			"key":        "3e393b83dbd9f6bc815536b4246255a48c4d0110",
+		},
+	)
+
+	// yes, the API returns an array of json treatments in response to a single
+	// form-encoded treatment
+	a.renderTreatmentList(w, r, insertedTreatments)
+}
+
+func (a ApiV1) createTreatmentsFromJSON(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := slogctx.FromCtx(ctx)
 
 	body, _ := io.ReadAll(r.Body)
 	defer r.Body.Close()
-	//fmt.Printf("%v\n", string(body))
 	var whatevs []map[string]interface{}
 	err := json.Unmarshal(body, &whatevs)
 	if err != nil {

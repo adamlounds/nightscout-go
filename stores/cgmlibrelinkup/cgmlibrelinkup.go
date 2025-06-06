@@ -145,7 +145,8 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 
 	// historical readings at 15-minute intervals
 	for _, e := range graph.Data.GraphData {
-		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.Timestamp)
+		// nb FactoryTimestamp is UTC, Timestamp is wearer's localtime
+		eventTime, err := time.Parse("1/2/2006 3:04:05 PM", e.FactoryTimestamp)
 		if err != nil {
 			log.Warn("lluStore graph cannot parse timestamp",
 				slog.Any("err", err),
@@ -181,11 +182,12 @@ func (s *LLUStore) graph(ctx context.Context) ([]models.Entry, error) {
 	}
 
 	trendString := directionForTrendArrow[latestReading.TrendArrow]
-	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.Timestamp)
+	// nb FactoryTimestamp is UTC, Timestamp is localtime
+	latestTime, err := time.Parse("1/2/2006 3:04:05 PM", latestReading.FactoryTimestamp)
 	if err != nil {
 		log.Warn("lluStore graph cannot parse timestamp",
 			slog.Any("err", err),
-			slog.String("timestamp", latestReading.Timestamp),
+			slog.String("timestamp", latestReading.FactoryTimestamp),
 		)
 		return nil, ErrUnexpectedDataFormat
 	}

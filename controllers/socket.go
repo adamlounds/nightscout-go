@@ -173,14 +173,19 @@ func (c SocketController) Authorize(s socketio.Conn, msg authorizeEvent) any {
 	s.Emit("dataUpdate", upd)
 
 	perms := map[string]bool{
-		"read":            true,  // 'api:*:read'
-		"write":           false, // api:*:create,update,delete
-		"write_treatment": false, // api:treatments:create,update,delete
+		"read":            true, // 'api:*:read'
+		"write":           true, // api:*:create,update,delete
+		"write_treatment": true, // api:treatments:create,update,delete
 	}
 	return perms
 }
 func (c SocketController) Alarm(s socketio.Conn, msg any) any {
 	fmt.Printf("alarm: %v (%v) [%s]\n", msg, s.Context(), s.ID())
+	s.Emit("clients", c.SockSvr.Count())
+	return "woo"
+}
+func (c SocketController) AlarmSubscribe(s socketio.Conn, msg any) any {
+	fmt.Printf("alarmSubscribe: %v (%v) [%s]\n", msg, s.Context(), s.ID())
 	s.Emit("clients", c.SockSvr.Count())
 	return "woo"
 }

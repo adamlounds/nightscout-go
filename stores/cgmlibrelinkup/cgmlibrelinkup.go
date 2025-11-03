@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/adamlounds/nightscout-go/models"
-	slogctx "github.com/veqryn/slog-context"
 	"io"
 	"log/slog"
 	"net"
@@ -18,6 +16,9 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/adamlounds/nightscout-go/models"
+	slogctx "github.com/veqryn/slog-context"
 )
 
 var ErrAuthnFailed = errors.New("llu: authentication failed")
@@ -279,7 +280,7 @@ func addLLUHeaders(req *http.Request) {
 	req.Header.Add("Accept", "application/json, text/plain, */*")
 	req.Header.Add("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Add("User-Agent", "Mozilla/5.0 (iPhone; CPU OS 17_4.1 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Version/17.4.1 Mobile/10A5355d Safari/8536.25")
-	req.Header.Add("version", "4.12.0")
+	req.Header.Add("version", "4.16.0")
 	req.Header.Add("product", "llu.ios")
 }
 
@@ -351,7 +352,9 @@ func (s *LLUStore) login(ctx context.Context) error {
 			slog.String("url", u.String()),
 			slog.Any("body", body),
 		)
-		return fmt.Errorf("lluStore got non-200 response: %w", err)
+		// TODO try to repeat "need to accept Ts&Cs" scenario.
+		// body is {"message":"invalid or expired jwt"}
+		return fmt.Errorf("lluStore got non-200 response: %d", res.StatusCode)
 	}
 
 	var regionRedirectResponse loginRegionRedirectResponse
